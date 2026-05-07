@@ -376,8 +376,7 @@ class Colony:
     # ------------------------------------------------------------------
     # POPULATION & WORKERS
     # ------------------------------------------------------------------
-
-        @property
+    @property
     def free_population(self) -> float:
         return self.population - len(self._workers) * POP_PER_WORKER
 
@@ -448,13 +447,17 @@ class Colony:
 
     def required_workers_by_level(self) -> Dict[int, int]:
         """
-        Returns a dict of {worker_level: count_needed} across all active buildings,
-        accounting for the current pool of assigned workers at each level.
+        Returns a dict of {worker_level: count_needed} across all buildings that
+        need workers (ACTIVE, SURGING, INACTIVE), accounting for the current pool
+        of assigned workers at each level.
         """
         needed: Dict[int, int] = {}
-        for b in self.active_buildings:
-            for lvl, cnt in b.stats.workforce.items():
-                needed[lvl] = needed.get(lvl, 0) + cnt
+        # Include all buildings that need workers to function
+        worker_needing_states = (BuildingState.ACTIVE, BuildingState.SURGING, BuildingState.INACTIVE)
+        for b in self._buildings:
+            if b.state in worker_needing_states:
+                for lvl, cnt in b.stats.workforce.items():
+                    needed[lvl] = needed.get(lvl, 0) + cnt
         # Subtract what we already have assigned
         for w in self._workers:
             if w.is_assigned:
@@ -475,6 +478,45 @@ class Colony:
 
     def workers_at_level(self, level: int) -> List[Worker]:
         return [w for w in self._workers if int(w.level) == level]
+
+    def assign_workers_to_building(self, building: Building) -> bool:
+        """
+        Assign workers to a building based on its workforce requirements.
+        Returns True if all required workers were assigned, False if partial/incomplete.
+        If not enough workers exist, assigns what's available and returns False.
+        
+        Note: For upgrades, existing workers are first unassigned so they can be
+        re-assigned if they meet the new requirements (or return to the pool).
+        """
+        # First unassign all current workers so we can re-assign fresh for upgrades
+        currently_assigned = [w for w in self._workers if w.assigned_building_id == building.id]
+        for w in currently_assigned:
+            w.assigned_building_id = None
+
+        required = building.stats.workforce
+        assigned = []
+        success = True
+
+        for level, count in required.items():
+            available = [w for w in self.unassigned_workers() if int(w.level) == level]
+            assign_count = min(count, len(available))
+            for w in available[:assign_count]:
+                w.assigned_building_id = building.id
+                assigned.append(w)
+            if assign_count < count:
+                success = False
+
+        if assigned:
+            self.last_events.append(
+                f"Assigned {len(assigned)} worker(s) to {building.building_type.name} "
+                f"lv{building.level} (id={building.id})."
+            )
+        if not success:
+            self.last_events.append(
+                f"⚠ {building.building_type.name} lv{building.level} (id={building.id}) "
+                f"INACTIVE — worker shortage."
+            )
+        return success
     
     # ------------------------------------------------------------------
     # LAB / UPSKILLING HELPERS
@@ -1031,12 +1073,23 @@ class Colony:
                                 f"Auto-recruited {recruited} L1 worker(s) (no Lab for L{lvl} training)."
                             )
 
+        # Try to reactivate INACTIVE buildings now that workers may have been recruited
+        for b in self._buildings:
+            if b.state == BuildingState.INACTIVE:
+                if self.assign_workers_to_building(b):
+                    b.state = BuildingState.ACTIVE
+                    self.last_events.append(
+                        f"Building {b.id} ({b.building_type.name} lv{b.level}) reactivated - workers now available."
+                    )
+
         # update construction progress and log completions
         for b in self._buildings:
             if b.advance_construction():
                 self.last_events.append(
                     f"{b.building_type.name} lv{b.level} (id={b.id}) construction complete."
                 )
+                if not self.assign_workers_to_building(b):
+                    b.state = BuildingState.INACTIVE
 
         # pull resources from producing buildings, applying tax and upkeep
         self.collect_resources()
