@@ -146,6 +146,7 @@ def _colony_snapshot(colony) -> Dict[str, Any]:
 
     net = colony._net_rates()
     net_rate = {rt.name: net.get(int(rt), 0.0) for rt in ResourceType}
+    power_net_rate = net.get(4, 0.0)   # synthetic key 4 = POWER
 
     # ── Workers ────────────────────────────────────────────────────────────
     workers: Dict[int, Dict[str, int]] = {}
@@ -182,6 +183,7 @@ def _colony_snapshot(colony) -> Dict[str, Any]:
         "label":           label,
         "stockpile":       stockpile,
         "net_rate":        net_rate,
+        "power_net_rate":  power_net_rate,
         "workers":         workers,
         "population":      colony.population,
         "buildings":       buildings,
@@ -211,9 +213,12 @@ def _faction_snapshot(faction) -> Dict[str, Any]:
 
     # Net rates: sum across colonies
     net_rate: Dict[str, float] = {rt.name: 0.0 for rt in ResourceType}
+    power_net_rate: float = 0.0
     for c in faction._colonies:
+        c_net = c._net_rates()
         for rt in ResourceType:
-            net_rate[rt.name] += c._net_rates().get(int(rt), 0.0)
+            net_rate[rt.name] += c_net.get(int(rt), 0.0)
+        power_net_rate += c_net.get(4, 0.0)
 
     # Workers: merge all colonies
     workers: Dict[int, Dict[str, int]] = {}
@@ -254,6 +259,7 @@ def _faction_snapshot(faction) -> Dict[str, Any]:
         "label":           label,
         "stockpile":       stockpile,
         "net_rate":        net_rate,
+        "power_net_rate":  power_net_rate,
         "workers":         workers,
         "population":      population,
         "buildings":       buildings,
@@ -407,7 +413,8 @@ def _section_label(fig: plt.Figure, y: float, text: str) -> None:
 
 
 def _plot_resource(ax, snapshots, ticks, rname: str) -> None:
-    """Stockpile (filled area) on left axis, net rate (dashed line) on right axis."""
+    """Stockpile (filled area) on left axis, net rate (dashed line) on right axis.
+    For the ENERGY subplot, also overlays POWER net rate (synthetic key 4) in orange."""
     stock  = [s["stockpile"].get(rname, 0.0) for s in snapshots]
     rate   = [s["net_rate"].get(rname, 0.0)  for s in snapshots]
     color  = _RES_COLORS.get(rname, "#c9d1d9")
@@ -420,8 +427,18 @@ def _plot_resource(ax, snapshots, ticks, rname: str) -> None:
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
 
     ax2 = ax.twinx()
-    ax2.plot(ticks, rate, color=color, linewidth=1.2, linestyle="--", alpha=0.7, label="rate/tick")
+    ax2.plot(ticks, rate, color=color, linewidth=1.2, linestyle="--", alpha=0.7, label="ENERGY Δ/tick")
     ax2.axhline(0, color="#30363d", linewidth=0.8)
+
+    # Overlay POWER net rate on the ENERGY subplot
+    if rname == "ENERGY":
+        power_color = "#ff9f43"   # warm orange — distinct from the yellow ENERGY tones
+        power_rate  = [s.get("power_net_rate", 0.0) for s in snapshots]
+        ax2.plot(ticks, power_rate, color=power_color, linewidth=1.4,
+                 linestyle="-.", alpha=0.9, label="POWER Δ/tick")
+        ax2.axhline(0, color="#30363d", linewidth=0.8)
+        ax.set_title("ENERGY  &  POWER", fontsize=9, color=color, pad=4)
+
     ax2.tick_params(labelsize=7, colors="#8b949e")
     ax2.set_ylabel("Δ/tick", fontsize=7, color="#8b949e")
     ax2.spines["right"].set_visible(True)
