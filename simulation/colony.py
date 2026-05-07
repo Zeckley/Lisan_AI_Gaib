@@ -164,6 +164,14 @@ class Building:
     @property
     def surge_multiplier(self) -> float:
         return 1.5 if self.state == BuildingState.SURGING else 1.0
+    
+    @property
+    def properly_staffed(self) -> bool:
+        """True if all required workers are assigned to this building."""
+        return all(
+            sum(w.assigned_building_id == self.id and int(w.level) == lvl for w in self._workers) >= count
+            for lvl, count in self.stats.workforce.items()
+        )
 
     # ------------------------------------------------------------------
     # Per-tick methods
@@ -478,6 +486,13 @@ class Colony:
 
     def workers_at_level(self, level: int) -> List[Worker]:
         return [w for w in self._workers if int(w.level) == level]
+    
+    def workers_by_level(self) -> Dict[int, int]:
+        levels: Dict[int, int] = {}
+        for w in self._workers:
+            lvl = int(w.level)
+            levels[lvl] = levels.get(lvl, 0) + 1
+        return levels
 
     def assign_workers_to_building(self, building: Building) -> bool:
         """
@@ -506,7 +521,7 @@ class Colony:
             if assign_count < count:
                 success = False
 
-        if assigned:
+        if assigned and success:
             self.last_events.append(
                 f"Assigned {len(assigned)} worker(s) to {building.building_type.name} "
                 f"lv{building.level} (id={building.id})."
@@ -517,6 +532,15 @@ class Colony:
                 f"INACTIVE — worker shortage."
             )
         return success
+    
+    def can_staff_L1_building(self, building_type: BuildingType) -> bool:
+        """True if enough unassigned workers exist to staff the building's workforce."""
+        required = BUILDING_STATS[building_type][1].workforce
+        available_by_level = self.workers_by_level()
+        for level, count in required.items():
+            if available_by_level.get(level, 0) < count:
+                return False
+        return True
     
     # ------------------------------------------------------------------
     # LAB / UPSKILLING HELPERS
@@ -634,6 +658,23 @@ class Colony:
         )
         self._buildings.append(b)
         return b
+
+    def can_upgrade_building(self, building_id: int) -> bool:
+        b = self.get_building(building_id)
+        if b is None or b.state != BuildingState.ACTIVE:
+            return False
+        if b.level >= MAX_BUILDING_LEVEL:
+            return False
+        next_level = b.level + 1
+        stats = BUILDING_STATS[b.building_type][next_level]
+        if not self._can_afford(stats.build_cost):
+            return False
+        required = stats.workforce
+        available_by_level = self.workers_by_level()
+        for level, count in required.items():
+            if available_by_level.get(level, 0) < count:
+                return False
+        return True
 
     def upgrade_building(self, building_id: int) -> bool:
         b = self.get_building(building_id)
@@ -763,6 +804,11 @@ class Colony:
         produced = colony_production_rates(self.building_counts)
         consumed = colony_production_costs(self.building_counts)
         all_keys = set(produced) | set(consumed)
+        if R.ORGANICS not in consumed:
+            consumed[R.ORGANICS] = self.organics_upkeep_per_tick
+        else:
+            consumed[R.ORGANICS] += self.organics_upkeep_per_tick
+        
         return {k: produced.get(k, 0.0) - consumed.get(k, 0.0) for k in all_keys}
 
     def evaluate_flags(self) -> None:
@@ -1006,19 +1052,75 @@ class Colony:
             if b.state == BuildingState.SURGING:
                 self.set_surge(b.id, False)
 
+        # check if food rate is good, upgrade if possible
+        net = self._net_rates()
+        food_decreasing = net.get(R.ORGANICS, 0.0) < 0
+        if food_decreasing:
+            # upgrade farm if able
+            for b in self._buildings:
+                if b.building_type == BuildingType.FARM:
+                    if self.can_upgrade_building(b.id):
+                        self.upgrade_building(b.id)
+                        self.last_events.append(
+                            f"⬆ Upgrading FARM id={b.id} to lv{b.level} (FOOD deficit)."
+                        )
+                        return   # one upgrade per tick
+            # if no building can be upgraded, try building a new farm if able
+            if self._can_afford(BUILDING_STATS[BuildingType.FARM][1].build_cost, BUILD_STOCKPILE_MIN):
+                self.last_events.append("Building new farm to raise organics rate.")
+                self.construct_building(BuildingType.FARM)
+
+            return
+        
+        # check for power deficit flag and upgrade power plant if able
+        if CriticalFlag.POWER_DEFICIT in self.critical_flags:
+            for b in self._buildings:
+                if b.building_type == BuildingType.POWER_PLANT:
+                    if self.can_upgrade_building(b.id):
+                        self.upgrade_building(b.id)
+                        self.last_events.append(
+                            f"⬆ Upgrading POWER PLANT id={b.id} to lv{b.level} (POWER deficit)."
+                        )
+                        return   # one upgrade per tick
+            # if no building can be upgraded, try building a new power plant if able
+            if self._can_afford(BUILDING_STATS[BuildingType.POWER_PLANT][1].build_cost, BUILD_STOCKPILE_MIN):
+                self.last_events.append("Building new Power Plant to raise power rate.")
+                self.construct_building(BuildingType.POWER_PLANT)            
+
+        # check if other buildings can be upgraded with surplus stockpile, prioritising those that would unlock new worker levels
+        for b in self._buildings:
+            if b.is_active:
+                if b.building_type == BuildingType.LAB and b.level < MAX_BUILDING_LEVEL:
+                    if self.can_upgrade_building(b.id):
+                        self.upgrade_building(b.id)
+                        self.last_events.append(
+                            f"⬆ Upgrading LAB id={b.id} to lv{b.level} (surplus population)."
+                        )
+                        return   # one upgrade per tick
+                elif b.level < MAX_BUILDING_LEVEL:
+                    next_stats = BUILDING_STATS[b.building_type][b.level + 1]
+                    if self._can_afford(next_stats.build_cost, BUILD_STOCKPILE_MIN * 2) and self.can_upgrade_building(b.id):
+                        self.upgrade_building(b.id)
+                        self.last_events.append(
+                            f"⬆ Upgrading {b.building_type.name} id={b.id} to lv{b.level} (surplus stockpile)."
+                        )
+                        return   # one upgrade per tick
+
+        
+        
         # Upgrade the lowest-level active building if surplus allows
-        candidates = sorted(
-            [b for b in self._buildings if b.is_active and b.level < MAX_BUILDING_LEVEL],
-            key=lambda b: b.level,
-        )
-        for b in candidates:
-            next_stats = BUILDING_STATS[b.building_type][b.level + 1]
-            if self._can_afford(next_stats.build_cost, BUILD_STOCKPILE_MIN * 2):
-                if self.upgrade_building(b.id):
-                    self.last_events.append(
-                        f"⬆ Upgrading {b.building_type.name} id={b.id} to lv{b.level} (IDLE surplus)."
-                    )
-                    break   # one upgrade per tick
+        # candidates = sorted(
+        #     [b for b in self._buildings if b.is_active and b.level < MAX_BUILDING_LEVEL],
+        #     key=lambda b: b.level,
+        # )
+        # for b in candidates:
+        #     next_stats = BUILDING_STATS[b.building_type][b.level + 1]
+        #     if self._can_afford(next_stats.build_cost, BUILD_STOCKPILE_MIN * 2):
+        #         if self.upgrade_building(b.id):
+        #             self.last_events.append(
+        #                 f"⬆ Upgrading {b.building_type.name} id={b.id} to lv{b.level} (IDLE surplus)."
+        #             )
+        #             break   # one upgrade per tick
 
     # ------------------------------------------------------------------
     # TICK
@@ -1072,6 +1174,32 @@ class Colony:
                             self.last_events.append(
                                 f"Auto-recruited {recruited} L1 worker(s) (no Lab for L{lvl} training)."
                             )
+                            # try to build of upgrade lab to meet demand in future ticks
+                            lab_cost = BUILDING_STATS[BuildingType.LAB][lvl].build_cost
+                            currently_building = False
+                            for b in self._buildings:
+                                type_check = b.building_type == BuildingType.LAB
+                                lvl_check = b.level >= lvl-1
+                                construction_check = b.state == BuildingState.CONSTRUCTING
+                                if type_check and lvl_check and construction_check:
+                                    # dont do anything, just wait for lab to be complete
+                                    currently_building = True
+                                    break
+                            
+                            if self._can_afford(lab_cost, BUILD_STOCKPILE_MIN) and not currently_building:
+                                b = self.construct_building(BuildingType.LAB, level=lvl)
+                                if b:
+                                    self.last_events.append(
+                                        f"Queued Lab lv{lvl} to enable L{lvl} worker training."
+                                    )
+                            elif currently_building:
+                                self.last_events.append(
+                                    f"Lab lv{lvl-1} already under construction to meet L{lvl} worker demand."
+                                )
+                            else:
+                                self.last_events.append(
+                                    f"Cannot afford Lab lv{lvl-1} to enable L{lvl} worker training."
+                                )
 
         # Try to reactivate INACTIVE buildings now that workers may have been recruited
         for b in self._buildings:
@@ -1114,8 +1242,8 @@ class Colony:
                 growth = self._rng.lognormal(0.05, 0.75, size=1)
                 decay = self._rng.lognormal(0, 0.75, size=1)
             # find growth and decay
-            pop_growth = np.ceil(self.population * growth[0]/100)
-            pop_decay  = np.ceil(self.population * decay[0]/100)
+            pop_growth = np.ceil(self.population * growth[0]/1000)
+            pop_decay  = np.ceil(self.population * decay[0]/1000)
             self.population += pop_growth - pop_decay
 
         # damage active buildings
@@ -1130,6 +1258,11 @@ class Colony:
         self.feed_population()
         self.evaluate_flags()
         self.execute_directive()
+
+        # print the last events
+        print(f"======   Tick {self._tick}   ======")
+        for ev in self.last_events:
+            print(f"Colony {self.name} (id={self.colony_id}):  {ev}")
 
     # ------------------------------------------------------------------
     # REPORTING
