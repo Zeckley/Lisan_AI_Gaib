@@ -454,45 +454,43 @@ def _plot_resource(ax, snapshots, ticks, rname: str) -> None:
 
 def _plot_workers(ax, snapshots, ticks) -> None:
     """
-    Stacked bar chart: each level split into assigned (solid) / unassigned (hatched).
-    Population shown as a secondary line.
+    Stacked area chart: each level split into assigned (darker) / unassigned (lighter).
+    Higher levels on top. Population shown as secondary line.
     """
     all_levels = sorted({lvl for s in snapshots for lvl in s["workers"]})
-    bar_width  = max(0.6, 0.8 * (ticks[-1] - ticks[0] + 1) / max(len(ticks), 1))
-    bar_width  = min(bar_width, 1.0)
+    ticks_arr = np.array(ticks)
 
-    bottom_a = np.zeros(len(ticks))
-    bottom_u = np.zeros(len(ticks))
-    bottom   = np.zeros(len(ticks))
+    bottom_assigned = np.zeros(len(ticks))
+    bottom_total = np.zeros(len(ticks))
 
     for lvl in all_levels:
         col = _LEVEL_COLORS[min(lvl - 1, 4)]
-        assigned   = np.array([s["workers"].get(lvl, {}).get("assigned",   0) for s in snapshots], float)
+        assigned = np.array([s["workers"].get(lvl, {}).get("assigned", 0) for s in snapshots], float)
         unassigned = np.array([s["workers"].get(lvl, {}).get("unassigned", 0) for s in snapshots], float)
-        total = assigned + unassigned
 
-        ax.bar(ticks, total, bottom=bottom, color=col, width=bar_width * 0.9,
-               alpha=0.9, label=f"L{lvl}")
-        # Hatch the unassigned portion
-        ax.bar(ticks, unassigned, bottom=bottom, color="none", width=bar_width * 0.9,
-               edgecolor="#8b949e", hatch="///", linewidth=0.4, alpha=0.5)
-        bottom = bottom + total
+        ax.fill_between(ticks_arr, bottom_assigned, bottom_assigned + assigned,
+                       color=col, alpha=0.9, label=f"L{lvl} assigned")
+        ax.fill_between(ticks_arr, bottom_assigned + assigned, bottom_assigned + assigned + unassigned,
+                       color=col, alpha=0.5, label=f"L{lvl} unassigned")
 
-    # Population secondary axis
+        bottom_assigned = bottom_assigned + assigned + unassigned
+
+    ax.plot(ticks_arr, bottom_assigned, color="#8b949e", linewidth=0.8, linestyle="-")
+
     ax2 = ax.twinx()
     pop = [s["population"] for s in snapshots]
-    ax2.plot(ticks, pop, color="#f0c133", linewidth=1.4, linestyle=":", label="population")
+    ax2.plot(ticks_arr, pop, color="#f0c133", linewidth=1.4, linestyle=":", label="population")
     ax2.set_ylabel("population", fontsize=7, color="#f0c133")
     ax2.tick_params(labelsize=7, colors="#8b949e")
     ax2.spines["right"].set_visible(True)
     ax2.spines["right"].set_color("#30363d")
 
-    ax.set_title("Workers  (solid=assigned, hatched=unassigned)", fontsize=9, pad=4)
+    ax.set_title("Workers  (darker=assigned, lighter=unassigned)", fontsize=9, pad=4)
     ax.set_xlabel("tick", fontsize=7)
     ax.set_ylabel("worker count", fontsize=7)
     ax.tick_params(labelsize=7)
-    ax.legend(fontsize=7, loc="upper left",
-              framealpha=0.3, facecolor="#161b22", edgecolor="#30363d", ncol=5)
+    ax.legend(fontsize=6, loc="upper left",
+             framealpha=0.3, facecolor="#161b22", edgecolor="#30363d", ncol=3)
 
 
 def _all_building_types(snapshots) -> List[str]:
