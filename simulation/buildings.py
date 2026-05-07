@@ -37,15 +37,18 @@ from typing import Dict, Optional, Tuple
 # ---------------------------------------------------------------------------
 
 class ResourceType(IntEnum):
-    MINERALS  = 0
+    MINERALS  = 0   # raw materials for building construction; also used as "processed" output from factories (same resource, different context)
     ENERGY    = 1   # raw planetary energy (geothermal / solar tap)
-    ORGANICS  = 2
-    RARE_MATS = 3
+    ORGANICS  = 2   # biomass, biofuel, fusion feedstock, etc. — used in farms and power plants
+    RARE_MATS = 3   # high-tech components, exotic matter, etc. — used in advanced buildings and repairs
+    POWER     = 4   # synthetic resource for internal use
+    SOLDIERS  = 5   # synthetic resource representing garrison strength
+    DEFENSE   = 6   # synthetic resource representing fortification strength
+    SHIPS     = 7   # synthetic resource representing colony ship progress
+    TRANSFER  = 8   # synthetic resource representing transfer capacity (for future use in inter-colony logistics)
+    RESEARCH  = 9   # synthetic resource representing research progress (for future use in tech tree and worker upskilling)
 
 R = ResourceType   # short alias used inside this file
-
-POWER = 4          # synthetic resource index — produced by Power Plants
-
 
 class BuildingType(IntEnum):
     MINE        = 0
@@ -190,11 +193,11 @@ MINE_STATS: Dict[int, BuildingLevelStats] = {
     ),
     3: _stats(
         level=3,
-        build_cost      = {R.MINERALS: 250, R.ENERGY: 30},
+        build_cost      = {R.MINERALS: 250, R.POWER: 30},
         production_rate = {R.MINERALS: 40},
         production_cost = {},
         damage_rate     = 0.7,
-        repair_cost     = {R.MINERALS: 20, R.ENERGY: 5},
+        repair_cost     = {R.MINERALS: 20, R.POWER: 5},
         repair_rate     = 1.5,
         build_ticks     = 35,
         workforce       = {2: 4, 3: 1},
@@ -240,8 +243,8 @@ POWER_PLANT_STATS: Dict[int, BuildingLevelStats] = {
     1: _stats(
         level=1,
         build_cost      = {R.MINERALS: 60},
-        production_rate = {POWER: 20},
-        production_cost = {R.ENERGY: 5},
+        production_rate = {R.POWER: 20},
+        production_cost = {R.ENERGY: 1},
         damage_rate     = 0.3,
         repair_cost     = {R.MINERALS: 6},
         repair_rate     = 2.5,
@@ -252,7 +255,7 @@ POWER_PLANT_STATS: Dict[int, BuildingLevelStats] = {
     2: _stats(
         level=2,
         build_cost      = {R.MINERALS: 140},
-        production_rate = {POWER: 45},
+        production_rate = {R.POWER: 45},
         production_cost = {R.ORGANICS: 6},
         damage_rate     = 0.4,
         repair_cost     = {R.MINERALS: 12},
@@ -264,7 +267,7 @@ POWER_PLANT_STATS: Dict[int, BuildingLevelStats] = {
     3: _stats(
         level=3,
         build_cost      = {R.MINERALS: 280, R.ORGANICS: 40},
-        production_rate = {POWER: 90},
+        production_rate = {R.POWER: 90},
         production_cost = {R.ORGANICS: 8},
         damage_rate     = 0.4,
         repair_cost     = {R.MINERALS: 20, R.ORGANICS: 5},
@@ -276,7 +279,7 @@ POWER_PLANT_STATS: Dict[int, BuildingLevelStats] = {
     4: _stats(
         level=4,
         build_cost      = {R.MINERALS: 500, R.ORGANICS: 80, R.RARE_MATS: 5},
-        production_rate = {POWER: 180},
+        production_rate = {R.POWER: 180},
         production_cost = {R.ORGANICS: 15},
         damage_rate     = 0.5,
         repair_cost     = {R.MINERALS: 40, R.ORGANICS: 10},
@@ -288,7 +291,7 @@ POWER_PLANT_STATS: Dict[int, BuildingLevelStats] = {
     5: _stats(
         level=5,
         build_cost      = {R.MINERALS: 900, R.RARE_MATS: 50},
-        production_rate = {POWER: 400},
+        production_rate = {R.POWER: 400},
         production_cost = {},   # zero running cost
         damage_rate     = 0.6,
         repair_cost     = {R.MINERALS: 60, R.RARE_MATS: 5},
@@ -361,7 +364,7 @@ FARM_STATS: Dict[int, BuildingLevelStats] = {
         level=5,
         build_cost      = {R.MINERALS: 550, R.RARE_MATS: 15},
         production_rate = {R.ORGANICS: 180},
-        production_cost = {POWER: 10},   # small power draw for grow-lights
+        production_cost = {R.POWER: 10},   # small power draw for grow-lights
         damage_rate     = 0.35,
         repair_cost     = {R.MINERALS: 40, R.RARE_MATS: 2},
         repair_rate     = 1.5,
@@ -418,11 +421,11 @@ FACTORY_STATS: Dict[int, BuildingLevelStats] = {
     ),
     3: _stats(
         level=3,
-        build_cost      = {R.MINERALS: 350, R.ENERGY: 40},
+        build_cost      = {R.MINERALS: 350, R.POWER: 40},
         production_rate = {R.MINERALS: 70},
         production_cost = {R.MINERALS: 35},
         damage_rate     = 0.6,
-        repair_cost     = {R.MINERALS: 28, R.ENERGY: 5},
+        repair_cost     = {R.MINERALS: 28, R.POWER: 5},
         repair_rate     = 1.5,
         build_ticks     = 45,
         workforce       = {2: 3, 3: 2},
@@ -464,14 +467,12 @@ FACTORY_STATS: Dict[int, BuildingLevelStats] = {
 # Produces DEFENSE_SCORE — represented here as a special key DEFENSE=6.
 # Consumes a small amount of POWER and ORGANICS (garrison supply).
 
-DEFENSE = 6   # synthetic key for defense rating contribution
-
 FORT_STATS: Dict[int, BuildingLevelStats] = {
     1: _stats(
         level=1,
         build_cost      = {R.MINERALS: 100},
-        production_rate = {DEFENSE: 10},
-        production_cost = {POWER: 2, R.ORGANICS: 2},
+        production_rate = {R.DEFENSE: 10},
+        production_cost = {R.POWER: 2, R.ORGANICS: 2},
         damage_rate     = 0.3,
         repair_cost     = {R.MINERALS: 10},
         repair_rate     = 2.0,
@@ -482,8 +483,8 @@ FORT_STATS: Dict[int, BuildingLevelStats] = {
     2: _stats(
         level=2,
         build_cost      = {R.MINERALS: 220},
-        production_rate = {DEFENSE: 24},
-        production_cost = {POWER: 4, R.ORGANICS: 4},
+        production_rate = {R.DEFENSE: 24},
+        production_cost = {R.POWER: 4, R.ORGANICS: 4},
         damage_rate     = 0.3,
         repair_cost     = {R.MINERALS: 18},
         repair_rate     = 2.0,
@@ -493,11 +494,11 @@ FORT_STATS: Dict[int, BuildingLevelStats] = {
     ),
     3: _stats(
         level=3,
-        build_cost      = {R.MINERALS: 420, R.ENERGY: 30},
-        production_rate = {DEFENSE: 50},
-        production_cost = {POWER: 8, R.ORGANICS: 6},
+        build_cost      = {R.MINERALS: 420, R.POWER: 30},
+        production_rate = {R.DEFENSE: 50},
+        production_cost = {R.POWER: 8, R.ORGANICS: 6},
         damage_rate     = 0.35,
-        repair_cost     = {R.MINERALS: 35, R.ENERGY: 5},
+        repair_cost     = {R.MINERALS: 35, R.POWER: 5},
         repair_rate     = 1.5,
         build_ticks     = 50,
         workforce       = {2: 4, 3: 1},
@@ -506,8 +507,8 @@ FORT_STATS: Dict[int, BuildingLevelStats] = {
     4: _stats(
         level=4,
         build_cost      = {R.MINERALS: 700, R.RARE_MATS: 8},
-        production_rate = {DEFENSE: 100},
-        production_cost = {POWER: 14, R.ORGANICS: 8},
+        production_rate = {R.DEFENSE: 100},
+        production_cost = {R.POWER: 14, R.ORGANICS: 8},
         damage_rate     = 0.4,
         repair_cost     = {R.MINERALS: 55, R.RARE_MATS: 1},
         repair_rate     = 1.5,
@@ -518,8 +519,8 @@ FORT_STATS: Dict[int, BuildingLevelStats] = {
     5: _stats(
         level=5,
         build_cost      = {R.MINERALS: 1100, R.RARE_MATS: 25},
-        production_rate = {DEFENSE: 200},
-        production_cost = {POWER: 25, R.ORGANICS: 12},
+        production_rate = {R.DEFENSE: 200},
+        production_cost = {R.POWER: 25, R.ORGANICS: 12},
         damage_rate     = 0.5,
         repair_cost     = {R.MINERALS: 80, R.RARE_MATS: 3},
         repair_rate     = 1.0,
@@ -540,14 +541,12 @@ FORT_STATS: Dict[int, BuildingLevelStats] = {
 # For simplicity, treat production_rate as ship_progress/tick and let the colony
 # logic accumulate until ≥ 100 to spawn a ship.
 
-SHIPS = 7
-
 SHIPYARD_STATS: Dict[int, BuildingLevelStats] = {
     1: _stats(
         level=1,
         build_cost      = {R.MINERALS: 150, R.ORGANICS: 20},
-        production_rate = {SHIPS: 2},    # ship-progress/tick; 100 = 1 ship
-        production_cost = {R.MINERALS: 8, R.ORGANICS: 4, POWER: 5},
+        production_rate = {R.SHIPS: 2},    # ship-progress/tick; 100 = 1 ship
+        production_cost = {R.MINERALS: 8, R.ORGANICS: 4, R.POWER: 5},
         damage_rate     = 0.3,
         repair_cost     = {R.MINERALS: 15, R.ORGANICS: 2},
         repair_rate     = 2.0,
@@ -558,8 +557,8 @@ SHIPYARD_STATS: Dict[int, BuildingLevelStats] = {
     2: _stats(
         level=2,
         build_cost      = {R.MINERALS: 300, R.ORGANICS: 40},
-        production_rate = {SHIPS: 4},
-        production_cost = {R.MINERALS: 14, R.ORGANICS: 7, POWER: 8},
+        production_rate = {R.SHIPS: 4},
+        production_cost = {R.MINERALS: 14, R.ORGANICS: 7, R.POWER: 8},
         damage_rate     = 0.35,
         repair_cost     = {R.MINERALS: 25, R.ORGANICS: 4},
         repair_rate     = 2.0,
@@ -569,11 +568,11 @@ SHIPYARD_STATS: Dict[int, BuildingLevelStats] = {
     ),
     3: _stats(
         level=3,
-        build_cost      = {R.MINERALS: 500, R.ORGANICS: 60, R.ENERGY: 30},
-        production_rate = {SHIPS: 7},
-        production_cost = {R.MINERALS: 20, R.ORGANICS: 10, POWER: 12},
+        build_cost      = {R.MINERALS: 500, R.ORGANICS: 60, R.POWER: 30},
+        production_rate = {R.SHIPS: 7},
+        production_cost = {R.MINERALS: 20, R.ORGANICS: 10, R.POWER: 12},
         damage_rate     = 0.4,
-        repair_cost     = {R.MINERALS: 40, R.ORGANICS: 6, R.ENERGY: 4},
+        repair_cost     = {R.MINERALS: 40, R.ORGANICS: 6, R.POWER: 4},
         repair_rate     = 1.5,
         build_ticks     = 60,
         workforce       = {2: 3, 3: 2},
@@ -582,8 +581,8 @@ SHIPYARD_STATS: Dict[int, BuildingLevelStats] = {
     4: _stats(
         level=4,
         build_cost      = {R.MINERALS: 800, R.RARE_MATS: 15, R.ORGANICS: 80},
-        production_rate = {SHIPS: 12},
-        production_cost = {R.MINERALS: 28, R.ORGANICS: 14, POWER: 18},
+        production_rate = {R.SHIPS: 12},
+        production_cost = {R.MINERALS: 28, R.ORGANICS: 14, R.POWER: 18},
         damage_rate     = 0.45,
         repair_cost     = {R.MINERALS: 60, R.RARE_MATS: 2, R.ORGANICS: 8},
         repair_rate     = 1.5,
@@ -594,8 +593,8 @@ SHIPYARD_STATS: Dict[int, BuildingLevelStats] = {
     5: _stats(
         level=5,
         build_cost      = {R.MINERALS: 1200, R.RARE_MATS: 40, R.ORGANICS: 100},
-        production_rate = {SHIPS: 20},
-        production_cost = {R.MINERALS: 40, R.ORGANICS: 20, POWER: 25},
+        production_rate = {R.SHIPS: 20},
+        production_cost = {R.MINERALS: 40, R.ORGANICS: 20, R.POWER: 25},
         damage_rate     = 0.5,
         repair_cost     = {R.MINERALS: 90, R.RARE_MATS: 5, R.ORGANICS: 10},
         repair_rate     = 1.0,
@@ -614,14 +613,12 @@ SHIPYARD_STATS: Dict[int, BuildingLevelStats] = {
 # Currently modelled as increasing inter-colony transfer efficiency.
 # Production is TRANSFER_CAPACITY (synthetic key TRANSFER=8).
 
-TRANSFER = 8
-
 RAILYARD_STATS: Dict[int, BuildingLevelStats] = {
     1: _stats(
         level=1,
         build_cost      = {R.MINERALS: 120},
-        production_rate = {TRANSFER: 20},   # units/tick transferable
-        production_cost = {POWER: 3},
+        production_rate = {R.TRANSFER: 20},   # units/tick transferable
+        production_cost = {R.POWER: 3},
         damage_rate     = 0.2,
         repair_cost     = {R.MINERALS: 12},
         repair_rate     = 2.5,
@@ -632,8 +629,8 @@ RAILYARD_STATS: Dict[int, BuildingLevelStats] = {
     2: _stats(
         level=2,
         build_cost      = {R.MINERALS: 250},
-        production_rate = {TRANSFER: 45},
-        production_cost = {POWER: 6},
+        production_rate = {R.TRANSFER: 45},
+        production_cost = {R.POWER: 6},
         damage_rate     = 0.2,
         repair_cost     = {R.MINERALS: 22},
         repair_rate     = 2.5,
@@ -644,8 +641,8 @@ RAILYARD_STATS: Dict[int, BuildingLevelStats] = {
     3: _stats(
         level=3,
         build_cost      = {R.MINERALS: 430, R.ENERGY: 25},
-        production_rate = {TRANSFER: 90},
-        production_cost = {POWER: 10},
+        production_rate = {R.TRANSFER: 90},
+        production_cost = {R.POWER: 10},
         damage_rate     = 0.25,
         repair_cost     = {R.MINERALS: 35, R.ENERGY: 4},
         repair_rate     = 2.0,
@@ -656,8 +653,8 @@ RAILYARD_STATS: Dict[int, BuildingLevelStats] = {
     4: _stats(
         level=4,
         build_cost      = {R.MINERALS: 700, R.RARE_MATS: 10},
-        production_rate = {TRANSFER: 180},
-        production_cost = {POWER: 16},
+        production_rate = {R.TRANSFER: 180},
+        production_cost = {R.POWER: 16},
         damage_rate     = 0.3,
         repair_cost     = {R.MINERALS: 55, R.RARE_MATS: 1},
         repair_rate     = 1.5,
@@ -668,8 +665,8 @@ RAILYARD_STATS: Dict[int, BuildingLevelStats] = {
     5: _stats(
         level=5,
         build_cost      = {R.MINERALS: 1100, R.RARE_MATS: 28},
-        production_rate = {TRANSFER: 350},
-        production_cost = {POWER: 24},
+        production_rate = {R.TRANSFER: 350},
+        production_cost = {R.POWER: 24},
         damage_rate     = 0.35,
         repair_cost     = {R.MINERALS: 80, R.RARE_MATS: 3},
         repair_rate     = 1.0,
@@ -689,8 +686,6 @@ RAILYARD_STATS: Dict[int, BuildingLevelStats] = {
 # at decreasing conversion rates per tier.
 # Upskill rates are separate from production — stored as a list indexed by
 # target_worker_level (1→2, 2→3, 3→4, 4→5).
-
-RESEARCH = 9
 
 @dataclass(frozen=True)
 class LabLevelStats(BuildingLevelStats):
@@ -724,8 +719,8 @@ LAB_STATS: Dict[int, LabLevelStats] = {
     1: _lab(
         level=1,
         build_cost      = {R.MINERALS: 80, R.ORGANICS: 10},
-        production_rate = {RESEARCH: 5},
-        production_cost = {POWER: 3},
+        production_rate = {R.RESEARCH: 5},
+        production_cost = {R.POWER: 3},
         damage_rate     = 0.2,
         repair_cost     = {R.MINERALS: 8, R.ORGANICS: 1},
         repair_rate     = 2.5,
@@ -737,8 +732,8 @@ LAB_STATS: Dict[int, LabLevelStats] = {
     2: _lab(
         level=2,
         build_cost      = {R.MINERALS: 180, R.ORGANICS: 25},
-        production_rate = {RESEARCH: 12},
-        production_cost = {POWER: 6},
+        production_rate = {R.RESEARCH: 12},
+        production_cost = {R.POWER: 6},
         damage_rate     = 0.25,
         repair_cost     = {R.MINERALS: 15, R.ORGANICS: 3},
         repair_rate     = 2.0,
@@ -750,8 +745,8 @@ LAB_STATS: Dict[int, LabLevelStats] = {
     3: _lab(
         level=3,
         build_cost      = {R.MINERALS: 340, R.ORGANICS: 40, R.ENERGY: 20},
-        production_rate = {RESEARCH: 25},
-        production_cost = {POWER: 10},
+        production_rate = {R.RESEARCH: 25},
+        production_cost = {R.POWER: 10},
         damage_rate     = 0.3,
         repair_cost     = {R.MINERALS: 28, R.ORGANICS: 5, R.ENERGY: 3},
         repair_rate     = 1.5,
@@ -763,8 +758,8 @@ LAB_STATS: Dict[int, LabLevelStats] = {
     4: _lab(
         level=4,
         build_cost      = {R.MINERALS: 580, R.RARE_MATS: 8, R.ORGANICS: 60},
-        production_rate = {RESEARCH: 50},
-        production_cost = {POWER: 15},
+        production_rate = {R.RESEARCH: 50},
+        production_cost = {R.POWER: 15},
         damage_rate     = 0.35,
         repair_cost     = {R.MINERALS: 45, R.RARE_MATS: 1, R.ORGANICS: 7},
         repair_rate     = 1.5,
@@ -776,8 +771,8 @@ LAB_STATS: Dict[int, LabLevelStats] = {
     5: _lab(
         level=5,
         build_cost      = {R.MINERALS: 900, R.RARE_MATS: 25, R.ORGANICS: 80},
-        production_rate = {RESEARCH: 100},
-        production_cost = {POWER: 22},
+        production_rate = {R.RESEARCH: 100},
+        production_cost = {R.POWER: 22},
         damage_rate     = 0.4,
         repair_cost     = {R.MINERALS: 70, R.RARE_MATS: 3, R.ORGANICS: 10},
         repair_rate     = 1.0,
