@@ -263,11 +263,11 @@ class StrategicFlag(IntEnum):
 # ---------------------------------------------------------------------------
 
 class DirectiveType(IntEnum):
-    HARVEST = 0   # maximise resource collection; minimise non-essential spending
-    DEFEND  = 1   # prioritise Forts and defensive buildings
-    EXPAND  = 2   # prioritise new building construction and population growth
-    EXPORT  = 3   # accumulate faction sub-stockpile; reduce local spending
-    IDLE    = 4   # balanced upkeep only; no expansion or surge
+    HARVEST = 0   # gather large stockpile; only build if survival at risk
+    BUILD   = 1   # expand building count for target resource
+    UPGRADE = 2   # upgrade existing buildings for target resource
+    EXPORT  = 3   # send target resource to colony, trade for WEALTH
+    EXPAND  = 4   # send ships/resources to establish new colony
 
 
 @dataclass
@@ -277,25 +277,25 @@ class Directive:
 
     Fields
     ------
-    directive_type  : primary intent
-    tax_rate        : fraction [0.0, 1.0+] of each resource produced that
-                      flows into the colony's faction sub-stockpile.
-                      Values > 1.0 will draw from local reserves.
-    urgency         : scalar [0.0, 1.0] — how aggressively to pursue the
-                      directive vs. balanced upkeep. 1.0 = full commitment.
-    target_resource : optional ResourceType to focus HARVEST directives
-    target_building : optional BuildingType to focus DEFEND/EXPAND directives
-    export_dest_id  : colony id that should receive faction sub-stockpile transfers
-    override_flags  : set of StrategicFlag values the faction explicitly suppresses
-                      (critical flags are never suppressible)
+    directive_type       : primary intent (HARVEST, BUILD, UPGRADE, EXPORT, EXPAND)
+    tax_rate             : fraction [0.0, 1.0+] of each resource produced that
+                          flows into the colony's faction sub-stockpile.
+                          Values > 1.0 will draw from local reserves.
+    urgency              : scalar [0.0, 1.0] — how aggressively to pursue the
+                          directive vs. balanced upkeep. 1.0 = full commitment.
+    target_resource     : ResourceType to focus the directive on
+    export_destination  : colony name to export target resource to (for WEALTH trade)
+    export_demand        : amount of target resource to export per tick
+    override_flags       : set of StrategicFlag values the faction explicitly suppresses
+                          (critical flags are never suppressible)
     """
-    directive_type:   DirectiveType          = DirectiveType.IDLE
-    tax_rate:         float                  = 0.10
-    urgency:          float                  = 0.5
-    target_resource:  Optional[int]          = None
-    target_building:  Optional[BuildingType] = None
-    export_dest_id:   Optional[int]          = None
-    override_flags:   Set[StrategicFlag]     = field(default_factory=set)
+    directive_type:      DirectiveType          = DirectiveType.HARVEST
+    tax_rate:            float                  = 0.10
+    urgency:             float                  = 0.5
+    target_resource:     Optional[int]          = None
+    export_destination:  Optional[str]          = None
+    export_demand:       float                  = 0.0
+    override_flags:      Set[StrategicFlag]     = field(default_factory=set)
 
 
 # ---------------------------------------------------------------------------
@@ -493,6 +493,13 @@ class Colony:
 
     def unassigned_workers(self) -> List[Worker]:
         return [w for w in self._workers if not w.is_assigned]
+    
+    def unassigned_workers_by_level(self) -> Dict[int, int]:
+        levels: Dict[int, int] = {}
+        for w in self.unassigned_workers():
+            lvl = int(w.level)
+            levels[lvl] = levels.get(lvl, 0) + 1
+        return levels
 
     def workers_at_level(self, level: int) -> List[Worker]:
         return [w for w in self._workers if int(w.level) == level]
@@ -543,9 +550,30 @@ class Colony:
             )
         return success
     
+    def unassign_workers_from_building(self, building: Building) -> int:
+        """Unassign all workers from the building and return count unassigned."""
+        assigned = [w for w in self._workers if w.assigned_building_id == building.id]
+        for w in assigned:
+            w.assigned_building_id = None
+        if assigned:
+            self.last_events.append(
+                f"Unassigned {len(assigned)} worker(s) from {building.building_type.name} "
+                f"lv{building.level} (id={building.id})."
+            )
+        return len(assigned)
+    
     def can_staff_L1_building(self, building_type: BuildingType) -> bool:
         """True if enough unassigned workers exist to staff the building's workforce."""
         required = BUILDING_STATS[building_type][1].workforce
+        available_by_level = self.workers_by_level()
+        for level, count in required.items():
+            if available_by_level.get(level, 0) < count:
+                return False
+        return True
+    
+    def can_staff_building(self, building: Building) -> bool:
+        """True if enough unassigned workers exist to staff the building's workforce."""
+        required = building.stats.workforce
         available_by_level = self.workers_by_level()
         for level, count in required.items():
             if available_by_level.get(level, 0) < count:
@@ -913,35 +941,9 @@ class Colony:
         d   = self.directive
         net = self._net_rates()
 
-        # ── 0. CRITICAL FLAG RESPONSE ──────────────────────────────────────
-        if CriticalFlag.FOOD_SHORTAGE in self.critical_flags:
-            # Emergency: build a Farm if we can afford one, else surge existing
-            if not any(b.building_type == BuildingType.FARM and b.state == BuildingState.CONSTRUCTING
-                       for b in self._buildings):
-                farm_cost = BUILDING_STATS[BuildingType.FARM][1].build_cost
-                if self._can_afford(farm_cost):
-                    b = self.construct_building(BuildingType.FARM)
-                    if b:
-                        self.last_events.append("🚨 Emergency Farm queued (FOOD_SHORTAGE).")
-            for b in self._buildings:
-                if b.building_type == BuildingType.FARM and b.is_active:
-                    self.set_surge(b.id, True)
-
-        if CriticalFlag.POWER_DEFICIT in self.critical_flags:
-            # Emergency: build a Power Plant or stop surging the heaviest consumers
-            if not any(b.building_type == BuildingType.POWER_PLANT and
-                       b.state == BuildingState.CONSTRUCTING for b in self._buildings):
-                pp_cost = BUILDING_STATS[BuildingType.POWER_PLANT][1].build_cost
-                if self._can_afford(pp_cost):
-                    b = self.construct_building(BuildingType.POWER_PLANT)
-                    if b:
-                        self.last_events.append("🚨 Emergency Power Plant queued (POWER_DEFICIT).")
-            # De-surge all non-essential buildings to cut power consumption
-            for b in self._buildings:
-                if b.state == BuildingState.SURGING and b.building_type not in (
-                    BuildingType.POWER_PLANT, BuildingType.FARM
-                ):
-                    self.set_surge(b.id, False)
+        # ── 0. BASIC SURVIVAL LOOP ─────────────────────────────────────────
+        if not self._basic_survival_loop(net):
+            return  # survival needs not met, skip directive execution
 
         # ── 1. REPAIR DAMAGED BUILDINGS ────────────────────────────────────
         for b in self._buildings:
@@ -952,8 +954,11 @@ class Colony:
         if d.directive_type == DirectiveType.HARVEST:
             self._rule_harvest(d, net)
 
-        elif d.directive_type == DirectiveType.DEFEND:
-            self._rule_defend(d, net)
+        elif d.directive_type == DirectiveType.BUILD:
+            self._rule_build(d, net)
+
+        elif d.directive_type == DirectiveType.UPGRADE:
+            self._rule_upgrade(d, net)
 
         elif d.directive_type == DirectiveType.EXPAND:
             self._rule_expand(d, net)
@@ -961,205 +966,220 @@ class Colony:
         elif d.directive_type == DirectiveType.EXPORT:
             self._rule_export(d, net)
 
-        else:  # IDLE
-            self._rule_idle(net)
+    # ── Basic Survival Loop ────────────────────────────────────────────────
+
+    def _basic_survival_loop(self, net: Dict[int, float]) -> bool:
+        """
+        Handles survival-critical needs before directive execution.
+        Returns True if survival is secured, False otherwise (skip directives).
+        """
+        # ── FOOD SHORTAGE ────────────────────────────────────────────────
+        if CriticalFlag.FOOD_SHORTAGE in self.critical_flags:
+            farm_type = BuildingType.FARM
+            if self._can_afford(BUILDING_STATS[farm_type][1].build_cost, BUILD_STOCKPILE_MIN):
+                if self.can_staff_L1_building(farm_type) or self.free_population >= BUILDING_STATS[farm_type][1].workforce.get(1, 0):
+                    self.construct_building(farm_type)
+                    self.last_events.append("🚨 Built Farm (FOOD_SHORTAGE).")
+            else:
+                for b in self._buildings:
+                    if b.is_active and b.building_type not in (BuildingType.FARM, BuildingType.MINE):
+                        prod_cost = BUILDING_STATS[b.building_type][b.level].production_cost
+                        if int(R.ORGANICS) in prod_cost:
+                            self.set_active(b.id, False)
+                            self.last_events.append(f"🚨 Disabled {b.building_type.name} (FOOD_SHORTAGE).")
+            return False
+
+        # ── POWER DEFICIT ────────────────────────────────────────────────
+        if CriticalFlag.POWER_DEFICIT in self.critical_flags:
+            pp_type = BuildingType.POWER_PLANT
+            if self._can_afford(BUILDING_STATS[pp_type][1].build_cost, BUILD_STOCKPILE_MIN):
+                if self.can_staff_L1_building(pp_type) or self.free_population >= BUILDING_STATS[pp_type][1].workforce.get(1, 0):
+                    self.construct_building(pp_type)
+                    self.last_events.append("🚨 Built Power Plant (POWER_DEFICIT).")
+            else:
+                for b in self._buildings:
+                    if b.is_active and b.building_type not in (BuildingType.POWER_PLANT, BuildingType.MINE):
+                        prod_cost = BUILDING_STATS[b.building_type][b.level].production_cost
+                        if 4 in prod_cost:  # POWER
+                            self.assign_workers_to_building(b.id, False)
+                            self.last_events.append(f"🚨 Disabled {b.building_type.name} (POWER_DEFICIT).")
+            return False
+
+        # ── DEFENSE NEEDS ────────────────────────────────────────────────
+        defense_needed = int(self.population * 10)  # ~10 defense per person
+        current_defense = self.stockpile.get(R.DEFENSE, 0.0)  # synthetic key 6 = DEFENSE
+
+        if current_defense < defense_needed:
+            # check inactive buildings and see if any can be reactivated to meet defense needs
+            total_rate = 0.0
+            for b in self._buildings:
+                if b.state == BuildingState.INACTIVE and b.building_type == BuildingType.FORT:
+                    prod_rate = BUILDING_STATS[b.building_type][b.level].production_rate[6]  # DEFENSE
+                    if self.can_staff_building(b) or self.free_population >= BUILDING_STATS[b.building_type][b.level].workforce.get(1, 0):
+                        self.assign_workers_to_building(b.id, True)
+                        self.last_events.append(f"🛡 Reactivated Fort (defense={current_defense + 1}/{defense_needed}).")
+                        total_rate += prod_rate  # assume full production for immediate effect
+                        if total_rate > (defense_needed - current_defense) / 10:
+                            # enough buildings are staffed to supply defense in 10 ticks
+                            break
+            fort_type = BuildingType.FORT
+            if self._can_afford(BUILDING_STATS[fort_type][1].build_cost, BUILD_STOCKPILE_MIN):
+                if self.free_population >= BUILDING_STATS[fort_type][1].workforce.get(1, 0):
+                    self.construct_building(fort_type)
+                    self.last_events.append(f"🛡 Built Fort (defense={current_defense + 1}/{defense_needed}).")
+        elif current_defense > defense_needed:
+            # unstaff all buildings
+            excess_forts = [
+                b for b in self._buildings
+                if b.building_type == BuildingType.FORT and b.is_active
+            ]
+            for b in excess_forts:
+                self.unassign_workers_from_building(b.id, False)
+                self.last_events.append(f"🛡 Disabled excess Fort (defense={current_defense - 1}/{defense_needed}).")
+
+        # ── WORKER SHORTAGE ──────────────────────────────────────────────
+        buildings_needing_workers = []
+        for b in self._buildings:
+            if not b.is_active and (b.building_type is not BuildingType.FORT):
+                if self.can_staff_building(b):
+                    self.assign_workers_to_building(b)
+                    self.last_events.append(f"👷 Reactivated {b.building_type.name} (id={b.id}) with workers.")
+                else:
+                    buildings_needing_workers.append(b.id)
+
+
+        if buildings_needing_workers:
+            # go through each building and recruit workers until all are staffed or we run out of free population
+            for b_id in buildings_needing_workers:
+                b = self.get_building(b_id)
+                if b is None:
+                    continue
+                required = b.stats.workforce
+                unassigned = self.unassigned_workers_by_level()
+                for level, count in required.items():
+                    needed = count - unassigned.get(level, 0)
+                    if needed > 0:
+                        recruited = self.recruit_workers_of_level(level, needed)
+                        if recruited > 0:
+                            self.last_events.append(f"👷 Recruited {recruited} worker(s) at level {level} for {b.building_type.name} (id={b.id}).")
+
+        # ── LAB UPGRADE ───────────────────────────────────────────────────
+        labs = [b for b in self._buildings if b.building_type == BuildingType.LAB and b.is_active]
+        if labs:
+            labs.sort(key=lambda b: b.level, reverse=True)
+            top_lab = labs[0]
+            if top_lab.level < MAX_BUILDING_LEVEL and self.can_upgrade_building(top_lab.id):
+                next_stats = BUILDING_STATS[BuildingType.LAB][top_lab.level + 1]
+                if self._can_afford(next_stats.build_cost, BUILD_STOCKPILE_MIN * 2):
+                    self.upgrade_building(top_lab.id)
+                    self.last_events.append(f"🔬 Upgraded LAB to lv{top_lab.level + 1}.")
+                    return True
+
+        return True
 
     # ── Directive sub-rules ────────────────────────────────────────────────
 
     def _rule_harvest(self, d: Directive, net: Dict[int, float]) -> None:
         """
-        Maximise resource yield. Surge producing buildings that are healthy.
-        Avoid new construction unless a critical resource is trending negative.
+        Gather large stockpile of target resource.
+        Buildings perform normal tasks. Only build new buildings if survival at risk.
+        Similar to idle state - let buildings work and maintain themselves.
         """
         for b in self._buildings:
             if b.is_active and b.health >= SURGE_HEALTH_MIN:
                 self.set_surge(b.id, True)
 
-        # Only build if a targeted resource has a negative net rate
-        if d.target_resource is not None and net.get(d.target_resource, 0.0) < 0:
-            target_type = _resource_to_building(d.target_resource)
-            if target_type:
-                cost = BUILDING_STATS[target_type][1].build_cost
-                if self._can_afford(cost, BUILD_STOCKPILE_MIN):
-                    self.construct_building(target_type)
-
-    def _rule_defend(self, d: Directive, net: Dict[int, float]) -> None:
+    def _rule_build(self, d: Directive, net: Dict[int, float]) -> None:
         """
-        Prioritise Fort construction. Keep existing buildings healthy but avoid
-        surging non-defensive buildings.
+        Expand building count for target resource.
+        Build new buildings to widen availability and maintain consistent flow.
         """
-        target = d.target_building or BuildingType.FORT
-        cost   = BUILDING_STATS[target][1].build_cost
-        # Build up to urgency-scaled count of defensive buildings
-        current_def = sum(1 for b in self._buildings if b.building_type == target and b.is_active)
-        desired_def = max(1, int(d.urgency * 3))
-        if current_def < desired_def and self._can_afford(cost, BUILD_STOCKPILE_MIN):
-            b = self.construct_building(target)
-            if b:
-                self.last_events.append(f"🏰 Queued {target.name} (DEFEND directive).")
+        if d.target_resource is None:
+            return
 
-        # Surge Forts only
-        for b in self._buildings:
-            if b.building_type == BuildingType.FORT and b.is_active and b.health >= SURGE_HEALTH_MIN:
-                self.set_surge(b.id, True)
-            elif b.building_type != BuildingType.FORT and b.state == BuildingState.SURGING:
-                self.set_surge(b.id, False)
+        target_type = _resource_to_building(d.target_resource)
+        if not target_type:
+            return
+
+        stats = BUILDING_STATS[target_type]
+        cost = stats[1].build_cost
+        min_workers = min(stats[1].workforce.values())
+
+        if self._can_afford(cost, BUILD_STOCKPILE_MIN):
+            if self.free_population >= min_workers:
+                b = self.construct_building(target_type)
+                if b:
+                    self.last_events.append(f"🏗 Queued {target_type.name} (BUILD).")
+
+    def _rule_upgrade(self, d: Directive, net: Dict[int, float]) -> None:
+        """
+        Upgrade existing buildings for target resource.
+        Only upgrade if sufficient workers for the upgraded building.
+        """
+        if d.target_resource is None:
+            return
+
+        target_type = _resource_to_building(d.target_resource)
+        if not target_type:
+            return
+
+        target_buildings = [
+            b for b in self._buildings
+            if b.building_type == target_type and b.is_active and b.level < MAX_BUILDING_LEVEL
+        ]
+
+        if not target_buildings:
+            return
+
+        target_buildings.sort(key=lambda b: b.level)
+
+        for b in target_buildings:
+            if self.can_upgrade_building(b.id):
+                next_stats = BUILDING_STATS[target_type][b.level + 1]
+                needed_workers = min(next_stats.workforce.values())
+                if self.free_population >= needed_workers:
+                    if self._can_afford(next_stats.build_cost, BUILD_STOCKPILE_MIN):
+                        self.upgrade_building(b.id)
+                        self.last_events.append(f"⬆ Upgraded {target_type.name} to lv{b.level + 1} (UPGRADE).")
+                        return
 
     def _rule_expand(self, d: Directive, net: Dict[int, float]) -> None:
         """
-        Prioritise new construction and population growth.
-        Build the most needed building type based on net resource rates,
-        then recruit workers if surplus population exists.
+        Send ships and resources to establish a new colony on a new system.
+        Build ships and accumulate resources for the new colony.
         """
-        # Find the resource with the most negative net rate — build its producer
-        deficit_resource = min(
-            (k for k in net if k in [int(r) for r in ResourceType]),
-            key=lambda k: net[k],
-            default=None
-        )
-        if deficit_resource is not None and net[deficit_resource] < 0:
-            target_type = _resource_to_building(deficit_resource)
-            if target_type:
-                cost = BUILDING_STATS[target_type][1].build_cost
-                if self._can_afford(cost, BUILD_STOCKPILE_MIN):
-                    b = self.construct_building(target_type)
-                    if b:
-                        self.last_events.append(f"🏗 Queued {target_type.name} (EXPAND — deficit).")
-        elif d.target_building:
-            cost = BUILDING_STATS[d.target_building][1].build_cost
-            if self._can_afford(cost, BUILD_STOCKPILE_MIN):
-                b = self.construct_building(d.target_building)
-                if b:
-                    self.last_events.append(f"🏗 Queued {d.target_building.name} (EXPAND directive).")
+        shipyard_type = BuildingType.SHIPYARD
+        shipyard_count = sum(1 for b in self._buildings if b.building_type == shipyard_type and b.is_active)
 
-        # Recruit workers if free population allows
-        if self.free_population >= POP_PER_WORKER * 2:
-            recruited = self.recruit_workers(max(1, int(d.urgency * 3)))
-            if recruited:
-                self.last_events.append(f"Recruited {recruited} worker(s) (EXPAND directive).")
+        if shipyard_count == 0:
+            if self._can_afford(BUILDING_STATS[shipyard_type][1].build_cost, BUILD_STOCKPILE_MIN):
+                self.construct_building(shipyard_type)
+                self.last_events.append("🏗 Queued Shipyard (EXPAND).")
+            return
+
+        ship_cost = BUILDING_STATS[shipyard_type][1].production_cost
+        target_rate = net.get(d.target_resource, 0.0) if d.target_resource else 0.0
+
+        if target_rate <= 0 and d.export_destination:
+            self.last_events.append(f"⚠ Cannot export {d.target_resource} - no surplus.")
+            return
 
     def _rule_export(self, d: Directive, net: Dict[int, float]) -> None:
         """
-        Accumulate faction sub-stockpile. Avoid new builds unless survival is at risk.
-        De-surge non-essential buildings to reduce consumption and upkeep.
+        Send target resource to another colony and trade for WEALTH.
+        Do not export more than the colony can produce (net rate must stay positive).
         """
-        for b in self._buildings:
-            if b.state == BuildingState.SURGING and b.building_type not in (
-                BuildingType.FARM, BuildingType.POWER_PLANT
-            ):
-                self.set_surge(b.id, False)
-
-        # Only build if critically needed and not overridden by critical flags
-        if CriticalFlag.FOOD_SHORTAGE not in self.critical_flags:
-            return  # handled in step 0 if critical; otherwise hold
-
-    def _rule_idle(self, net: Dict[int, float]) -> None:
-        """
-        Balanced upkeep. De-surge everything, recruit minimally, upgrade if
-        there is a comfortable stockpile surplus.
-        """
-        for b in self._buildings:
-            if b.state == BuildingState.SURGING:
-                self.set_surge(b.id, False)
-
-                   
-
-        # check if other buildings can be upgraded with surplus stockpile, prioritising those that would unlock new worker levels
-        for b in self._buildings:
-            if b.is_active:
-                if b.building_type == BuildingType.LAB and b.level < MAX_BUILDING_LEVEL:
-                    if self.can_upgrade_building(b.id):
-                        self.upgrade_building(b.id)
-                        self.last_events.append(
-                            f"⬆ Upgrading LAB id={b.id} to lv{b.level} (surplus population)."
-                        )
-                        return   # one upgrade per tick
-                elif b.level < MAX_BUILDING_LEVEL:
-                    next_stats = BUILDING_STATS[b.building_type][b.level + 1]
-                    if self._can_afford(next_stats.build_cost, BUILD_STOCKPILE_MIN * 2) and self.can_upgrade_building(b.id):
-                        self.upgrade_building(b.id)
-                        self.last_events.append(
-                            f"⬆ Upgrading {b.building_type.name} id={b.id} to lv{b.level} (surplus stockpile)."
-                        )
-                        return   # one upgrade per tick
-
-        
-        
-        # Upgrade the lowest-level active building if surplus allows
-        # candidates = sorted(
-        #     [b for b in self._buildings if b.is_active and b.level < MAX_BUILDING_LEVEL],
-        #     key=lambda b: b.level,
-        # )
-        # for b in candidates:
-        #     next_stats = BUILDING_STATS[b.building_type][b.level + 1]
-        #     if self._can_afford(next_stats.build_cost, BUILD_STOCKPILE_MIN * 2):
-        #         if self.upgrade_building(b.id):
-        #             self.last_events.append(
-        #                 f"⬆ Upgrading {b.building_type.name} id={b.id} to lv{b.level} (IDLE surplus)."
-        #             )
-        #             break   # one upgrade per tick
-
-    def _rule_address_flags(self, net: Dict[int, float]) -> None:
-        """"""
-        # check if food rate is good, upgrade if possible
-        net = self._net_rates()
-        food_decreasing = net.get(R.ORGANICS, 0.0) < 0
-        if food_decreasing:
-            # upgrade farm if able
-            for b in self._buildings:
-                if b.building_type == BuildingType.FARM:
-                    if self.can_upgrade_building(b.id):
-                        self.upgrade_building(b.id)
-                        self.last_events.append(
-                            f"Upgrading FARM id={b.id} to lv{b.level} (FOOD deficit)."
-                        )
-                        return   # one upgrade per tick
-            # if no building can be upgraded, try building a new farm if able
-            if self._can_afford(BUILDING_STATS[BuildingType.FARM][1].build_cost, BUILD_STOCKPILE_MIN):
-                self.last_events.append("Building new farm to raise organics rate.")
-                self.construct_building(BuildingType.FARM)
+        if not d.export_destination or d.target_resource is None:
             return
-        
-        # check for power deficit flag and upgrade power plant if able
-        if CriticalFlag.POWER_DEFICIT in self.critical_flags:
-            for b in self._buildings:
-                if b.building_type == BuildingType.POWER_PLANT:
-                    if self.can_upgrade_building(b.id):
-                        self.upgrade_building(b.id)
-                        self.last_events.append(
-                            f"⬆ Upgrading POWER PLANT id={b.id} to lv{b.level} (POWER deficit)."
-                        )
-                        return   # one upgrade per tick
-            # if no building can be upgraded, try building a new power plant if able
-            if self._can_afford(BUILDING_STATS[BuildingType.POWER_PLANT][1].build_cost, BUILD_STOCKPILE_MIN):
-                self.last_events.append("Building new Power Plant to raise power rate.")
-                self.construct_building(BuildingType.POWER_PLANT)
 
-    def _rule_upgrade_loop(self, net: Dict[int, float]) -> None:
-        """
-        Loop through the priority list of buildings and upgrade the first one we can afford and staff.
-        priority list is determined by the current directive and strategic flags, with a bias towards upgrading
-        labs that unlock new worker levels.
-        """
-        # check if any building can be upgraded with surplus stockpile, prioritising those that would unlock new worker levels
-        
-        for b in self._buildings:
-            if b.is_active and b.level < MAX_BUILDING_LEVEL:
-                if b.building_type == BuildingType.LAB:
-                    if self.can_upgrade_building(b.id):
-                        self.upgrade_building(b.id)
-                        self.last_events.append(
-                            f"⬆ Upgrading LAB id={b.id} to lv{b.level} (surplus population)."
-                        )
-                        return   # one upgrade per tick
-                else:
-                    next_stats = BUILDING_STATS[b.building_type][b.level + 1]
-                    if self._can_afford(next_stats.build_cost, BUILD_STOCKPILE_MIN * 2) and self.can_upgrade_building(b.id):
-                        self.upgrade_building(b.id)
-                        self.last_events.append(
-                            f"⬆ Upgrading {b.building_type.name} id={b.id} to lv{b.level} (surplus stockpile)."
-                        )
-                        return   # one upgrade per tick
+        current_export = d.export_demand
+        target_rate = net.get(d.target_resource, 0.0)
+
+        if target_rate <= current_export:
+            self.last_events.append(f"⚠ Export demand exceeds production for {d.target_resource}.")
+            return
+
+        self.last_events.append(f"📤 Exporting {current_export} of resource {d.target_resource} to {d.export_destination} for WEALTH.")
 
     # ------------------------------------------------------------------
     # TICK
@@ -1389,14 +1409,14 @@ class Faction:
 
     def issue_directive(
         self,
-        colony_id:      int,
-        directive_type: DirectiveType,
-        tax_rate:       float                  = 0.10,
-        urgency:        float                  = 0.5,
-        target_resource: Optional[int]         = None,
-        target_building: Optional[BuildingType]= None,
-        export_dest_id:  Optional[int]         = None,
-        override_flags:  Optional[Set[StrategicFlag]] = None,
+        colony_id:         int,
+        directive_type:    DirectiveType,
+        tax_rate:          float                  = 0.10,
+        urgency:           float                  = 0.5,
+        target_resource:   Optional[int]          = None,
+        export_destination: Optional[str]         = None,
+        export_demand:     float                  = 0.0,
+        override_flags:    Optional[Set[StrategicFlag]] = None,
     ) -> bool:
         """
         Send a directive to a colony. Returns False if colony not found.
@@ -1408,22 +1428,20 @@ class Faction:
         if c is None:
             return False
 
-        # Guard: never export from a critically stressed colony
         effective_tax = tax_rate
         if CriticalFlag.FOOD_SHORTAGE in c.critical_flags or \
            CriticalFlag.POPULATION_COLLAPSE in c.critical_flags:
             if directive_type == DirectiveType.EXPORT and tax_rate > 0:
                 effective_tax = 0.0
-                # Still allow the directive, just zero the tax
 
         c.directive = Directive(
-            directive_type  = directive_type,
-            tax_rate        = effective_tax,
-            urgency         = urgency,
-            target_resource = target_resource,
-            target_building = target_building,
-            export_dest_id  = export_dest_id,
-            override_flags  = override_flags or set(),
+            directive_type      = directive_type,
+            tax_rate            = effective_tax,
+            urgency             = urgency,
+            target_resource     = target_resource,
+            export_destination  = export_destination,
+            export_demand       = export_demand,
+            override_flags      = override_flags or set(),
         )
         return True
 
