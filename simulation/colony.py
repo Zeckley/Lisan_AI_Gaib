@@ -86,7 +86,7 @@ FOOD_SHORTAGE_TICKS:       int   = 3     # consecutive starving ticks before FOO
 POWER_DEFICIT_THRESHOLD:   float = 0.0   # net POWER below this → POWER_DEFICIT
 POPULATION_COLLAPSE_FRAC:  float = 0.25  # population fallen to this fraction of start → COLLAPSE
 DEFENSE_LOW_THRESHOLD:     float = 50.0  # net DEFENSE score below this → DEFENSE_NEEDED
-WORKER_SHORTAGE_RATIO:     float = 0.5   # unassigned workers / total workforce below this
+WORKER_SHORTAGE_RATIO:     float = 0.1   # unassigned workers / total workforce below this
 RESOURCE_LOW_TICKS:        int   = 5     # ticks of negative net rate before RESOURCE_LOW
 EXPORT_STRAINED_THRESHOLD: float = 0.10  # local stockpile fraction remaining after tax
 
@@ -392,6 +392,16 @@ class Colony:
     def organics_upkeep_per_tick(self) -> float:
         return self.population * ORGANICS_PER_POP
 
+    @property
+    def power_stockpile(self) -> float:
+        power = 0.0
+        for b in self._buildings:
+            if b.is_producing:
+                prod = b.stats.production_rate.get(4, 0.0)
+                cons = b.stats.production_cost.get(4, 0.0)
+                power += prod - cons
+        return power
+
     def recruit_workers(self, count: int = 1) -> int:
         """Convert population into level-1 workers. Returns count created."""
         max_possible = int(self.free_population // POP_PER_WORKER)
@@ -553,7 +563,7 @@ class Colony:
         """
         from buildings import LabLevelStats
         rates = [0.0, 0.0, 0.0, 0.0]
-        for b in self.active_buildings:
+        for b in self._buildings:
             stats = b.stats
             if isinstance(stats, LabLevelStats):
                 for i, r in enumerate(stats.upskill_rates):
@@ -1052,40 +1062,7 @@ class Colony:
             if b.state == BuildingState.SURGING:
                 self.set_surge(b.id, False)
 
-        # check if food rate is good, upgrade if possible
-        net = self._net_rates()
-        food_decreasing = net.get(R.ORGANICS, 0.0) < 0
-        if food_decreasing:
-            # upgrade farm if able
-            for b in self._buildings:
-                if b.building_type == BuildingType.FARM:
-                    if self.can_upgrade_building(b.id):
-                        self.upgrade_building(b.id)
-                        self.last_events.append(
-                            f"⬆ Upgrading FARM id={b.id} to lv{b.level} (FOOD deficit)."
-                        )
-                        return   # one upgrade per tick
-            # if no building can be upgraded, try building a new farm if able
-            if self._can_afford(BUILDING_STATS[BuildingType.FARM][1].build_cost, BUILD_STOCKPILE_MIN):
-                self.last_events.append("Building new farm to raise organics rate.")
-                self.construct_building(BuildingType.FARM)
-
-            return
-        
-        # check for power deficit flag and upgrade power plant if able
-        if CriticalFlag.POWER_DEFICIT in self.critical_flags:
-            for b in self._buildings:
-                if b.building_type == BuildingType.POWER_PLANT:
-                    if self.can_upgrade_building(b.id):
-                        self.upgrade_building(b.id)
-                        self.last_events.append(
-                            f"⬆ Upgrading POWER PLANT id={b.id} to lv{b.level} (POWER deficit)."
-                        )
-                        return   # one upgrade per tick
-            # if no building can be upgraded, try building a new power plant if able
-            if self._can_afford(BUILDING_STATS[BuildingType.POWER_PLANT][1].build_cost, BUILD_STOCKPILE_MIN):
-                self.last_events.append("Building new Power Plant to raise power rate.")
-                self.construct_building(BuildingType.POWER_PLANT)            
+                   
 
         # check if other buildings can be upgraded with surplus stockpile, prioritising those that would unlock new worker levels
         for b in self._buildings:
@@ -1121,6 +1098,68 @@ class Colony:
         #                 f"⬆ Upgrading {b.building_type.name} id={b.id} to lv{b.level} (IDLE surplus)."
         #             )
         #             break   # one upgrade per tick
+
+    def _rule_address_flags(self, net: Dict[int, float]) -> None:
+        """"""
+        # check if food rate is good, upgrade if possible
+        net = self._net_rates()
+        food_decreasing = net.get(R.ORGANICS, 0.0) < 0
+        if food_decreasing:
+            # upgrade farm if able
+            for b in self._buildings:
+                if b.building_type == BuildingType.FARM:
+                    if self.can_upgrade_building(b.id):
+                        self.upgrade_building(b.id)
+                        self.last_events.append(
+                            f"Upgrading FARM id={b.id} to lv{b.level} (FOOD deficit)."
+                        )
+                        return   # one upgrade per tick
+            # if no building can be upgraded, try building a new farm if able
+            if self._can_afford(BUILDING_STATS[BuildingType.FARM][1].build_cost, BUILD_STOCKPILE_MIN):
+                self.last_events.append("Building new farm to raise organics rate.")
+                self.construct_building(BuildingType.FARM)
+            return
+        
+        # check for power deficit flag and upgrade power plant if able
+        if CriticalFlag.POWER_DEFICIT in self.critical_flags:
+            for b in self._buildings:
+                if b.building_type == BuildingType.POWER_PLANT:
+                    if self.can_upgrade_building(b.id):
+                        self.upgrade_building(b.id)
+                        self.last_events.append(
+                            f"⬆ Upgrading POWER PLANT id={b.id} to lv{b.level} (POWER deficit)."
+                        )
+                        return   # one upgrade per tick
+            # if no building can be upgraded, try building a new power plant if able
+            if self._can_afford(BUILDING_STATS[BuildingType.POWER_PLANT][1].build_cost, BUILD_STOCKPILE_MIN):
+                self.last_events.append("Building new Power Plant to raise power rate.")
+                self.construct_building(BuildingType.POWER_PLANT)
+
+    def _rule_upgrade_loop(self, net: Dict[int, float]) -> None:
+        """
+        Loop through the priority list of buildings and upgrade the first one we can afford and staff.
+        priority list is determined by the current directive and strategic flags, with a bias towards upgrading
+        labs that unlock new worker levels.
+        """
+        # check if any building can be upgraded with surplus stockpile, prioritising those that would unlock new worker levels
+        
+        for b in self._buildings:
+            if b.is_active and b.level < MAX_BUILDING_LEVEL:
+                if b.building_type == BuildingType.LAB:
+                    if self.can_upgrade_building(b.id):
+                        self.upgrade_building(b.id)
+                        self.last_events.append(
+                            f"⬆ Upgrading LAB id={b.id} to lv{b.level} (surplus population)."
+                        )
+                        return   # one upgrade per tick
+                else:
+                    next_stats = BUILDING_STATS[b.building_type][b.level + 1]
+                    if self._can_afford(next_stats.build_cost, BUILD_STOCKPILE_MIN * 2) and self.can_upgrade_building(b.id):
+                        self.upgrade_building(b.id)
+                        self.last_events.append(
+                            f"⬆ Upgrading {b.building_type.name} id={b.id} to lv{b.level} (surplus stockpile)."
+                        )
+                        return   # one upgrade per tick
 
     # ------------------------------------------------------------------
     # TICK
@@ -1236,10 +1275,10 @@ class Colony:
             self.last_events.append("No population growth due to FOOD_SHORTAGE.")
         else:
             if self.directive.directive_type == DirectiveType.EXPAND:
-                growth = self._rng.lognormal(0.5, 0.5, size=1)
+                growth = 1.5*self._rng.lognormal(0, 0.5, size=1)
                 decay = self._rng.lognormal(0, 0.75, size=1)
             else:
-                growth = self._rng.lognormal(0.05, 0.75, size=1)
+                growth = 1.1*self._rng.lognormal(0, 0.75, size=1)
                 decay = self._rng.lognormal(0, 0.75, size=1)
             # find growth and decay
             pop_growth = np.ceil(self.population * growth[0]/1000)

@@ -92,6 +92,10 @@ _RES_COLORS = {
     "ENERGY":    "#f0c133",
     "ORGANICS":  "#56d364",
     "RARE_MATS": "#bc8cff",
+    "DEFENSE":   "#f85149",
+    "SHIPS":     "#79c0ff",
+    "TRANSFER":   "#e3b341",
+    "RESEARCH":   "#bc8cff",
 }
 
 _LEVEL_COLORS = [
@@ -133,7 +137,7 @@ _BUILD_STATE_COLORS = {
 
 def _colony_snapshot(colony) -> Dict[str, Any]:
     """Extract a snapshot dict from a Colony instance."""
-    from buildings import BuildingState, ResourceType
+    from buildings import BuildingState, BuildingType, ResourceType
 
     tick  = colony._tick
     label = colony.name
@@ -171,6 +175,15 @@ def _colony_snapshot(colony) -> Dict[str, Any]:
         else:
             by_level["idle"]         += 1
 
+    # Ensure all 8 building types are present, defaulting to level 1 with zeros
+    for bt in BuildingType:
+        bname = bt.name
+        if bname not in buildings:
+            buildings[bname] = {1: {"producing": 0, "constructing": 0, "idle": 0}}
+        else:
+            if 1 not in buildings[bname]:
+                buildings[bname][1] = {"producing": 0, "constructing": 0, "idle": 0}
+
     # ── Flags & Directive ──────────────────────────────────────────────────
     critical_flags  = [f.name for f in colony.critical_flags]
     strategic_flags = [f.name for f in colony.strategic_flags]
@@ -203,7 +216,7 @@ def _faction_snapshot(faction) -> Dict[str, Any]:
     Flags = union of all colony flags.
     Directive = "MULTI" if colonies differ, else the common directive name.
     """
-    from buildings import ResourceType
+    from buildings import BuildingType, ResourceType
 
     tick  = faction._tick
     label = faction.name
@@ -239,6 +252,15 @@ def _faction_snapshot(faction) -> Dict[str, Any]:
                 fac_bl = fac_bt.setdefault(lvl, {"producing": 0, "constructing": 0, "idle": 0})
                 for k in ("producing", "constructing", "idle"):
                     fac_bl[k] += counts[k]
+
+    # Ensure all 8 building types are present, defaulting to level 1 with zeros
+    for bt in BuildingType:
+        bname = bt.name
+        if bname not in buildings:
+            buildings[bname] = {1: {"producing": 0, "constructing": 0, "idle": 0}}
+        else:
+            if 1 not in buildings[bname]:
+                buildings[bname][1] = {"producing": 0, "constructing": 0, "idle": 0}
 
     # Flags: union
     critical_flags  = sorted({f for c in faction._colonies for f in c.critical_flags},  key=lambda x: x.value)
@@ -335,13 +357,13 @@ def plot_history(
     n_bld   = len(btypes)
 
     # Use a gridspec with 4 rows of varying heights
-    fig = plt.figure(figsize=(20, 22), facecolor="#0d1117")
+    fig = plt.figure(figsize=(20, 32), facecolor="#0d1117")
     fig.subplots_adjust(hspace=0.55, wspace=0.35)
 
     gs_top  = matplotlib.gridspec.GridSpec(
-        4, max(n_res, n_bld, 2),
+        6, 4,
         figure=fig,
-        height_ratios=[3, 2, 3, 2],
+        height_ratios=[2, 2, 2, 2, 2, 2],
         hspace=0.55,
         wspace=0.35,
     )
@@ -355,29 +377,33 @@ def plot_history(
     # ══════════════════════════════════════════════════════════════════════
     # Panel 1 — Resources
     # ══════════════════════════════════════════════════════════════════════
+    n_cols = 4
     for i, rname in enumerate(all_resources):
-        col = i % max(n_res, 1)
-        ax  = fig.add_subplot(gs_top[0, col])
+        col = i % n_cols
+        row = i // n_cols
+        ax  = fig.add_subplot(gs_top[row, col])
         _plot_resource(ax, snapshots, ticks, rname)
 
     # ══════════════════════════════════════════════════════════════════════
     # Panel 2 — Workers
     # ══════════════════════════════════════════════════════════════════════
-    ax_workers = fig.add_subplot(gs_top[1, :])
+    ax_workers = fig.add_subplot(gs_top[2, :])
     _plot_workers(ax_workers, snapshots, ticks)
 
-    # ══════════════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════════
     # Panel 3 — Buildings
-    # ══════════════════════════════════════════════════════════════════════
-    n_cols = max(n_bld, 1)
+    # ══════════════════════════════════════════════════════════════════════════════
+    n_cols = 4
     for i, btype in enumerate(btypes):
-        ax = fig.add_subplot(gs_top[2, i % n_cols])
+        col = i % n_cols
+        row = i // n_cols + 3
+        ax = fig.add_subplot(gs_top[row, col])
         _plot_building(ax, snapshots, ticks, btype)
 
     # ══════════════════════════════════════════════════════════════════════
     # Panel 4 — Flags & Directive
     # ══════════════════════════════════════════════════════════════════════
-    ax_flags = fig.add_subplot(gs_top[3, :])
+    ax_flags = fig.add_subplot(gs_top[5, :])
     _plot_flags(ax_flags, snapshots, ticks)
 
     # ── Super-title ────────────────────────────────────────────────────────
