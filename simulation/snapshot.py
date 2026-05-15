@@ -89,13 +89,13 @@ matplotlib.rcParams.update({
 # ── Palette ────────────────────────────────────────────────────────────────
 _RES_COLORS = {
     "MINERALS":  "#58a6ff",
-    "ENERGY":    "#f0c133",
+    "POWER":     "#f0c133",
     "ORGANICS":  "#56d364",
-    "RARE_MATS": "#bc8cff",
+    "RARE_MATS": "#a768ff",
     "DEFENSE":   "#f85149",
-    "SHIPS":     "#79c0ff",
-    "TRANSFER":   "#e3b341",
-    "RESEARCH":   "#bc8cff",
+    "SHIPS":     "#70faff",
+    "TRANSFER":   "#ffda8a",
+    "RESEARCH":   "#c7c7c7",
 }
 
 _LEVEL_COLORS = [
@@ -440,7 +440,7 @@ def _section_label(fig: plt.Figure, y: float, text: str) -> None:
 
 def _plot_resource(ax, snapshots, ticks, rname: str) -> None:
     """Stockpile (filled area) on left axis, net rate (dashed line) on right axis.
-    For the ENERGY subplot, also overlays POWER net rate (synthetic key 4) in orange."""
+    For the WEALTH subplot, plots POWER net rate instead (replaces former ENERGY+POWER view)."""
     stock  = [s["stockpile"].get(rname, 0.0) for s in snapshots]
     rate   = [s["net_rate"].get(rname, 0.0)  for s in snapshots]
     color  = _RES_COLORS.get(rname, "#c9d1d9")
@@ -453,17 +453,8 @@ def _plot_resource(ax, snapshots, ticks, rname: str) -> None:
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
 
     ax2 = ax.twinx()
-    ax2.plot(ticks, rate, color=color, linewidth=1.2, linestyle="--", alpha=0.7, label="ENERGY Δ/tick")
+    ax2.plot(ticks, rate, color=color, linewidth=1.2, linestyle="--", alpha=0.7, label=f"{rname} Δ/tick")
     ax2.axhline(0, color="#30363d", linewidth=0.8)
-
-    # Overlay POWER net rate on the ENERGY subplot
-    if rname == "ENERGY":
-        power_color = "#ff9f43"   # warm orange — distinct from the yellow ENERGY tones
-        power_rate  = [s.get("power_net_rate", 0.0) for s in snapshots]
-        ax2.plot(ticks, power_rate, color=power_color, linewidth=1.4,
-                 linestyle="-.", alpha=0.9, label="POWER Δ/tick")
-        ax2.axhline(0, color="#30363d", linewidth=0.8)
-        ax.set_title("ENERGY  &  POWER", fontsize=9, color=color, pad=4)
 
     ax2.tick_params(labelsize=7, colors="#8b949e")
     ax2.set_ylabel("Δ/tick", fontsize=7, color="#8b949e")
@@ -685,12 +676,12 @@ if __name__ == "__main__":
 
     home = Colony(
         colony_id=0, name="Arrakeen", system_id=0, population=800.0,
-        stockpile={int(R.MINERALS): 2000., int(R.ENERGY): 500.,
+        stockpile={int(R.MINERALS): 2000., int(R.WEALTH): 500.,
                    int(R.ORGANICS): 8000., int(R.RARE_MATS): 20.},
     )
     outpost = Colony(
         colony_id=1, name="Sietch Tabr", system_id=1, population=200.0,
-        stockpile={int(R.MINERALS): 500., int(R.ENERGY): 100.,
+        stockpile={int(R.MINERALS): 500., int(R.WEALTH): 100.,
                    int(R.ORGANICS): 800., int(R.RARE_MATS): 5.},
     )
 

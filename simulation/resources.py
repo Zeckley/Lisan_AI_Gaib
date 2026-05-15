@@ -112,7 +112,7 @@ def sample_distribution(
 
 class ResourceType(IntEnum):
     MINERALS  = 0   # stone, ore, metals
-    ENERGY    = 1   # coal, geothermal — non-renewable
+    WEALTH    = 1   # currency/trade resource - acts as wildcard for trading
     ORGANICS  = 2   # plants, animals, lumber
     RARE_MATS = 3   # uranium, platinum, titanium, gold …
 
@@ -157,12 +157,12 @@ DEFAULT_RESOURCE_CONFIGS: dict[ResourceType, ResourceConfig] = {
         dist="lognormal",   mean=1.0, std=0.6,  scale=500.0,
         size_exponent=1.3,  quality_exponent=1.2,
     ),
-    ResourceType.ENERGY: ResourceConfig(
-        dist="exponential", mean=1.0, std=0.5,  scale=250.0,
-        size_exponent=1.0,  quality_exponent=1.8,
+    ResourceType.WEALTH: ResourceConfig(
+        dist="lognormal",   mean=1.0, std=0.6,  scale=0.0,
+        size_exponent=1.0,  quality_exponent=1.5,
     ),
     ResourceType.ORGANICS: ResourceConfig(
-        dist="beta",        mean=0.3, std=0.15, scale=350.0,
+        dist="beta",        mean=0.3, std=0.15, scale=500.0,
         size_exponent=1.1,  quality_exponent=2.0,
     ),
     ResourceType.RARE_MATS: ResourceConfig(

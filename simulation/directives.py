@@ -109,7 +109,7 @@ class RareMatsPriority(IntEnum):
 
 DEFAULT_PRIORITY_LISTS: Dict[ResourceType, Tuple[BuildingType, ...]] = {
     R.MINERALS:   tuple(BuildingType[b.name] for b in MineralsPriority),
-    R.ENERGY:     tuple(BuildingType[b.name] for b in EnergyPriority),
+    R.POWER:      tuple(BuildingType[b.name] for b in EnergyPriority),
     R.ORGANICS:   tuple(BuildingType[b.name] for b in OrganicsPriority),
     R.RARE_MATS:  tuple(BuildingType[b.name] for b in RareMatsPriority),
 }
@@ -536,7 +536,7 @@ class DirectiveIssuer:
         )
 
     def _create_rebel_faction(self, original: 'Faction', colonies: List['Colony']) -> 'Faction':
-        from faction import Faction, FactionType
+        from colony import Faction, FactionType
         name = f"rebellion forces of {original.name}"
         return Faction(name=name, faction_type=FactionType.AGGRESSIVE, population=0.0)
 

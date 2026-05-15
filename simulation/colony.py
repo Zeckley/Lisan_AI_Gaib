@@ -1188,6 +1188,9 @@ class Colony:
         # Auto-recruit / promote workers to meet per-level demand
         shortage = self.required_workers_by_level()
         if shortage:
+            self.last_events.append(
+                f"Current worker shortage by level: " + ", ".join(f"L{lvl}: {gap}" for lvl, gap in shortage.items() if gap > 0)
+            )
             for lvl in sorted(shortage):   # fill lowest levels first
                 gap = shortage[lvl]
                 if gap <= 0:
@@ -1278,11 +1281,11 @@ class Colony:
                 growth = 1.5*self._rng.lognormal(0, 0.5, size=1)
                 decay = self._rng.lognormal(0, 0.75, size=1)
             else:
-                growth = 1.1*self._rng.lognormal(0, 0.75, size=1)
+                growth = 1.2*self._rng.lognormal(0, 0.75, size=1)
                 decay = self._rng.lognormal(0, 0.75, size=1)
             # find growth and decay
-            pop_growth = np.ceil(self.population * growth[0]/1000)
-            pop_decay  = np.ceil(self.population * decay[0]/1000)
+            pop_growth = np.ceil(self.population * growth[0]/250)
+            pop_decay  = np.ceil(self.population * decay[0]/250)
             self.population += pop_growth - pop_decay
 
         # damage active buildings
@@ -1560,11 +1563,10 @@ class Faction:
 def _resource_to_building(resource_key: int) -> Optional[BuildingType]:
     _map = {
         int(R.MINERALS):  BuildingType.MINE,
-        int(R.ENERGY):    BuildingType.POWER_PLANT,
+        int(R.POWER):     BuildingType.POWER_PLANT,
         int(R.ORGANICS):  BuildingType.FARM,
         int(R.RARE_MATS): BuildingType.MINE,
-        4:                BuildingType.POWER_PLANT,   # POWER
-        9:                BuildingType.LAB,            # RESEARCH
+        int(R.RESEARCH):  BuildingType.LAB,
     }
     return _map.get(resource_key)
 
@@ -1584,7 +1586,7 @@ if __name__ == "__main__":
         population = 800.0,
         stockpile  = {
             int(R.MINERALS): 2000.0,
-            int(R.ENERGY):    500.0,
+            int(R.POWER):    500.0,
             int(R.ORGANICS): 8000.0,
             int(R.RARE_MATS):  20.0,
         },
@@ -1597,7 +1599,7 @@ if __name__ == "__main__":
         population = 200.0,
         stockpile  = {
             int(R.MINERALS):  500.0,
-            int(R.ENERGY):    100.0,
+            int(R.POWER):    100.0,
             int(R.ORGANICS):  800.0,
             int(R.RARE_MATS):   5.0,
         },

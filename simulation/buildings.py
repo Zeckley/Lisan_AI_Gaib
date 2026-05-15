@@ -16,7 +16,7 @@ Design principles
 Resource keys used throughout
 ------------------------------
   R.MINERALS  = 0
-  R.ENERGY    = 1
+  R.WEALTH    = 1
   R.ORGANICS  = 2
   R.RARE_MATS = 3
   POWER       = synthetic resource (index 4) for internal book-keeping
@@ -38,7 +38,7 @@ from typing import Dict, Optional, Tuple
 
 class ResourceType(IntEnum):
     MINERALS  = 0   # raw materials for building construction; also used as "processed" output from factories (same resource, different context)
-    ENERGY    = 1   # raw planetary energy (geothermal / solar tap)
+    WEALTH    = 1   # currency/trade resource - acts as wildcard for trading with friendly factions
     ORGANICS  = 2   # biomass, biofuel, fusion feedstock, etc. — used in farms and power plants
     RARE_MATS = 3   # high-tech components, exotic matter, etc. — used in advanced buildings and repairs
     POWER     = 4   # synthetic resource for internal use
@@ -54,7 +54,7 @@ class BuildingType(IntEnum):
     MINE        = 0
     POWER_PLANT = 1
     FARM        = 2
-    FACTORY     = 3   # becomes a Recycler at lv4-5 (same type, different profile)
+    FACTORY     = 3
     FORT        = 4
     SHIPYARD    = 5
     RAILYARD    = 6
@@ -63,19 +63,20 @@ class BuildingType(IntEnum):
 
 class DepartmentType(IntEnum):
     RESOURCES       = 0
-    ENERGY          = 1
+    POWER           = 1
     AGRICULTURE     = 2
     MANUFACTURING   = 3
     DEFENSE         = 4
     TRANSPORTATION  = 5
     COMMERCE        = 6
     INTELLIGENCE    = 7
+    WEALTH          = 8   # future use: luxury goods, trade hubs, etc.
 
 
 # Which department owns which building
 BUILDING_DEPARTMENT: Dict[BuildingType, DepartmentType] = {
     BuildingType.MINE:        DepartmentType.RESOURCES,
-    BuildingType.POWER_PLANT: DepartmentType.ENERGY,
+    BuildingType.POWER_PLANT: DepartmentType.POWER,
     BuildingType.FARM:        DepartmentType.AGRICULTURE,
     BuildingType.FACTORY:     DepartmentType.MANUFACTURING,
     BuildingType.FORT:        DepartmentType.DEFENSE,
@@ -231,12 +232,12 @@ MINE_STATS: Dict[int, BuildingLevelStats] = {
 
 
 # ---------------------------------------------------------------------------
-# POWER PLANT  (Department of Energy)
+# POWER PLANT  (Department of Power)
 # ---------------------------------------------------------------------------
 #
 # Produces POWER (synthetic resource index 4).
-# Lv1-2 consume raw planetary ENERGY.
-# Lv3-4 consume ORGANICS (biofuel / fusion feedstock).
+# Lv1 consumes ORGANICS (basic wood/organic burning).
+# Lv2-4 consume ORGANICS (biofuel / fusion feedstock).
 # Lv5   consumes nothing — zero-point / antimatter; but costs RARE_MATS to build.
 
 POWER_PLANT_STATS: Dict[int, BuildingLevelStats] = {
@@ -244,13 +245,13 @@ POWER_PLANT_STATS: Dict[int, BuildingLevelStats] = {
         level=1,
         build_cost      = {R.MINERALS: 60},
         production_rate = {R.POWER: 20},
-        production_cost = {R.ENERGY: 1},
+        production_cost = {R.ORGANICS: 3},
         damage_rate     = 0.3,
         repair_cost     = {R.MINERALS: 6},
         repair_rate     = 2.5,
         build_ticks     = 12,
-        workforce       = {1: 2, 2: 1},
-        notes           = "Geothermal tap; consumes planetary ENERGY.",
+        workforce       = {1: 2},
+        notes           = "Basic wood burning furnace; consumes ORGANICS.",
     ),
     2: _stats(
         level=2,
@@ -404,7 +405,7 @@ FACTORY_STATS: Dict[int, BuildingLevelStats] = {
         repair_cost     = {R.MINERALS: 8},
         repair_rate     = 2.0,
         build_ticks     = 15,
-        workforce       = {1: 3, 2: 2},
+        workforce       = {1: 3, 2: 1},
         notes           = "Basic smelter; net +5 minerals/tick after feedstock.",
     ),
     2: _stats(
@@ -551,7 +552,7 @@ SHIPYARD_STATS: Dict[int, BuildingLevelStats] = {
         repair_cost     = {R.MINERALS: 15, R.ORGANICS: 2},
         repair_rate     = 2.0,
         build_ticks     = 25,
-        workforce       = {1: 3, 2: 2},
+        workforce       = {1: 5},
         notes           = "Drydock; builds slow colony ships (50 ticks/ship).",
     ),
     2: _stats(
@@ -563,7 +564,7 @@ SHIPYARD_STATS: Dict[int, BuildingLevelStats] = {
         repair_cost     = {R.MINERALS: 25, R.ORGANICS: 4},
         repair_rate     = 2.0,
         build_ticks     = 40,
-        workforce       = {1: 2, 2: 3, 3: 1},
+        workforce       = {1: 2, 2: 3},
         notes           = "Expanded drydock; 25 ticks/ship.",
     ),
     3: _stats(
@@ -623,7 +624,7 @@ RAILYARD_STATS: Dict[int, BuildingLevelStats] = {
         repair_cost     = {R.MINERALS: 12},
         repair_rate     = 2.5,
         build_ticks     = 20,
-        workforce       = {1: 3, 2: 1},
+        workforce       = {1: 3},
         notes           = "Cargo rail loop; basic inter-zone logistics.",
     ),
     2: _stats(
