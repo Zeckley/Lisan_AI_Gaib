@@ -39,15 +39,14 @@ Rule-based colony decision priority (lowest index = highest priority)
 
 Exports
 -------
-WorkerLevel     - IntEnum 1-5
-Worker          - dataclass
-Building        - runtime building instance
 CriticalFlag    - IntEnum
 StrategicFlag   - IntEnum
 DirectiveType   - IntEnum
 Directive       - dataclass
 Colony          - local agent
 Faction         - strategic agent
+
+(Worker, WorkerLevel, and Building are now defined in buildings.py.)
 """
 
 from __future__ import annotations
@@ -59,12 +58,18 @@ from enum import IntEnum
 from typing import Dict, List, Optional, Set, Tuple
 
 from buildings import (
+    Building,
     BuildingType,
     BuildingState,
     BuildingLevelStats,
     BUILDING_STATS,
     MAX_BUILDING_LEVEL,
+    INITIAL_HEALTH,
+    REPAIR_THRESHOLD,
+    DAMAGED_THRESHOLD,
     ResourceType,
+    Worker,
+    WorkerLevel,
     colony_production_rates,
     colony_production_costs,
 )
@@ -77,27 +82,27 @@ R = ResourceType
 # ---------------------------------------------------------------------------
 
 ORGANICS_PER_POP:  float = 0.05   # organics consumed per population unit per tick
-DAMAGED_THRESHOLD: float = 0.50   # health fraction below which → DAMAGED
-INITIAL_HEALTH:    float = 1.0    # health on construction complete
 POP_PER_WORKER:    int   = 10     # population units per level-1 worker
+BASE_ORGANICS_RATE: int  = 5      # base organics made by a starter colony each tick
 
 # Flag thresholds
-FOOD_SHORTAGE_TICKS:       int   = 3     # consecutive starving ticks before FOOD_SHORTAGE
+FOOD_SHORTAGE_TICKS:       int   = 1     # consecutive starving ticks before FOOD_SHORTAGE
+FOOD_DEFICIT_THRESHOLD:    float = 10.0    # net ORGANICS below this → starving tick
 POWER_DEFICIT_THRESHOLD:   float = 0.0   # net POWER below this → POWER_DEFICIT
 POPULATION_COLLAPSE_FRAC:  float = 0.25  # population fallen to this fraction of start → COLLAPSE
-DEFENSE_LOW_THRESHOLD:     float = 50.0  # net DEFENSE score below this → DEFENSE_NEEDED
+DEFENSE_LOW_THRESHOLD:     float = 10.0  # net DEFENSE score below this → DEFENSE_NEEDED
+BOLSTER_DEFENSE_TICKS:     int   = 25    # how many ticks of DEFENSE_NEEDED before bolstering response escalates
 WORKER_SHORTAGE_RATIO:     float = 0.1   # unassigned workers / total workforce below this
 RESOURCE_LOW_TICKS:        int   = 5     # ticks of negative net rate before RESOURCE_LOW
 EXPORT_STRAINED_THRESHOLD: float = 0.10  # local stockpile fraction remaining after tax
 
 # Rule-based thresholds
 SURGE_HEALTH_MIN:     float = 0.80   # don't surge buildings below this health
-REPAIR_PRIORITY_FRAC: float = 0.60   # start repairs when health drops below this
 BUILD_STOCKPILE_MIN:  float = 1.5    # multiplier: must have 1.5× build cost in stockpile
 
 
 # ---------------------------------------------------------------------------
-# WORKER
+# FLAGS
 # ---------------------------------------------------------------------------
 
 class WorkerLevel(IntEnum):
@@ -146,6 +151,7 @@ class Building:
     level:           int           = 1
     state:           BuildingState = BuildingState.CONSTRUCTING
     health:          float         = INITIAL_HEALTH
+    max_health:      float         = INITIAL_HEALTH
     ticks_remaining: int           = 0
     planet_index:    Optional[int] = None
 
@@ -155,10 +161,6 @@ class Building:
 
     @property
     def is_active(self) -> bool:
-        return self.state == BuildingState.ACTIVE
-
-    @property
-    def is_producing(self) -> bool:
         return self.state in (BuildingState.ACTIVE, BuildingState.SURGING)
 
     @property
@@ -183,18 +185,22 @@ class Building:
             return
         rate = self.stats.damage_rate * (2.0 if self.state == BuildingState.SURGING else 1.0)
         self.health = max(0.0, self.health - rate / 100.0)
-        if self.health == 0.0:
+        if self.health <= 0.0:
             self.state = BuildingState.DESTROYED
-        elif self.health < DAMAGED_THRESHOLD and self.state != BuildingState.SURGING:
+        elif self.health < REPAIR_THRESHOLD:
+            self.state = BuildingState.REPAIRING
+        elif self.health < DAMAGED_THRESHOLD:
             self.state = BuildingState.DAMAGED
 
     def apply_repair(self) -> None:
         """Advance repair health; transition to ACTIVE when full."""
-        if self.state != BuildingState.REPAIRING:
+        if self.state not in [BuildingState.ACTIVE, BuildingState.REPAIRING, BuildingState.DAMAGED]:
             return
         self.health = min(1.0, self.health + self.stats.repair_rate / 100.0)
         if self.health >= 1.0:
             self.state = BuildingState.ACTIVE
+        print(f"Repairing building {self.id} ({self.building_type.name} lv{self.level}): "
+              f"health {self.health:.2f} (rate {self.stats.repair_rate:.2f}/tick)")
 
     def advance_construction(self) -> bool:
         """Count down construction. Returns True when ACTIVE."""
@@ -208,12 +214,12 @@ class Building:
         return False
 
     def production_this_tick(self) -> Dict[int, float]:
-        if not self.is_producing:
+        if not self.is_active:
             return {}
         return {r: amt * self.surge_multiplier for r, amt in self.stats.production_rate.items()}
 
     def upkeep_this_tick(self) -> Dict[int, float]:
-        if not self.is_producing:
+        if not self.is_active:
             return {}
         return dict(self.stats.production_cost)
 
@@ -346,6 +352,9 @@ class Colony:
     last_consumed:     Dict[int, float]     = field(default_factory=dict,  repr=False)
     last_events:       List[str]            = field(default_factory=list,  repr=False)
 
+    # debugging settings
+    verbose = True
+
     def __post_init__(self) -> None:
         self.starting_pop = self.population
 
@@ -396,7 +405,7 @@ class Colony:
     def power_stockpile(self) -> float:
         power = 0.0
         for b in self._buildings:
-            if b.is_producing:
+            if b.is_active:
                 prod = b.stats.production_rate.get(4, 0.0)
                 cons = b.stats.production_cost.get(4, 0.0)
                 power += prod - cons
@@ -520,10 +529,10 @@ class Colony:
         Note: For upgrades, existing workers are first unassigned so they can be
         re-assigned if they meet the new requirements (or return to the pool).
         """
-        # First unassign all current workers so we can re-assign fresh for upgrades
-        currently_assigned = [w for w in self._workers if w.assigned_building_id == building.id]
-        for w in currently_assigned:
+        # Unassign current workers from this building
+        for w in building._workers:
             w.assigned_building_id = None
+        building._workers.clear()
 
         required = building.stats.workforce
         assigned = []
@@ -536,31 +545,39 @@ class Colony:
                 w.assigned_building_id = building.id
                 assigned.append(w)
             if assign_count < count:
+                for w in assigned:
+                    w.assigned_building_id = None
+                building._workers.clear()
                 success = False
 
         if assigned and success:
+            building._workers = assigned
+            building.state = BuildingState.ACTIVE
             self.last_events.append(
                 f"Assigned {len(assigned)} worker(s) to {building.building_type.name} "
                 f"lv{building.level} (id={building.id})."
             )
         if not success:
+            building.state = BuildingState.INACTIVE
             self.last_events.append(
-                f"⚠ {building.building_type.name} lv{building.level} (id={building.id}) "
+                f"{building.building_type.name} lv{building.level} (id={building.id}) "
                 f"INACTIVE — worker shortage."
             )
         return success
     
     def unassign_workers_from_building(self, building: Building) -> int:
         """Unassign all workers from the building and return count unassigned."""
-        assigned = [w for w in self._workers if w.assigned_building_id == building.id]
-        for w in assigned:
+        count = len(building._workers)
+        for w in building._workers:
             w.assigned_building_id = None
-        if assigned:
+        building._workers.clear()
+        building.state = BuildingState.INACTIVE
+        if count:
             self.last_events.append(
-                f"Unassigned {len(assigned)} worker(s) from {building.building_type.name} "
+                f"Unassigned {count} worker(s) from {building.building_type.name} "
                 f"lv{building.level} (id={building.id})."
             )
-        return len(assigned)
+        return count
     
     def can_staff_L1_building(self, building_type: BuildingType) -> bool:
         """True if enough unassigned workers exist to staff the building's workforce."""
@@ -665,7 +682,7 @@ class Colony:
 
     @property
     def active_buildings(self) -> List[Building]:
-        return [b for b in self._buildings if b.is_producing]
+        return [b for b in self._buildings if b.is_active]
 
     @property
     def building_counts(self) -> Dict[Tuple[BuildingType, int], int]:
@@ -761,7 +778,7 @@ class Colony:
         """
         tax_rate = max(0.0, self.directive.tax_rate)
         for b in self._buildings:
-            if not b.is_producing: # if not ACTIVE or SURGING, skip production and upkeep
+            if not b.is_active: # if not ACTIVE or SURGING, skip production and upkeep
                 continue
             upkeep = b.upkeep_this_tick()
             if upkeep and not self._deduct(upkeep): # if upkeep exists and can't be paid, building goes INACTIVE
@@ -915,13 +932,189 @@ class Colony:
         _set_strategic(StrategicFlag.EXPORT_STRAINED, strained)
 
         # CONSTRUCTION_BLOCKED — colony wants to build but cannot afford minimum cost
-        cheapest = min(
-            (BUILDING_STATS[bt][1].build_cost for bt in BuildingType),
-            key=lambda c: sum(c.values()),
-            default={}
-        )
-        blocked = not self._can_afford(cheapest, BUILD_STOCKPILE_MIN)
-        _set_strategic(StrategicFlag.CONSTRUCTION_BLOCKED, blocked)
+        constructing = any(b.state == BuildingState.CONSTRUCTING for b in self._buildings)
+        if constructing:
+            _set_strategic(StrategicFlag.CONSTRUCTION_BLOCKED, False)
+        else:
+            cheapest = min(
+                (BUILDING_STATS[bt][1].build_cost for bt in BuildingType),
+                key=lambda c: sum(c.values()),
+                default={}
+            )
+            blocked = not self._can_afford(cheapest, BUILD_STOCKPILE_MIN)
+            _set_strategic(StrategicFlag.CONSTRUCTION_BLOCKED, blocked)
+
+    # ------------------------------------------------------------------
+    # DECISION VALIDATION
+    # ------------------------------------------------------------------
+
+    def _construction_pipeline(self) -> Tuple[Dict[int, int], Dict[int, float]]:
+        """
+        Examine all buildings currently under construction.
+
+        Returns
+        -------
+        pending_workers : Dict[int, int]
+            {worker_level: count} of workers needed by all pending buildings
+        pending_rate_impact : Dict[int, float]
+            net production rate impact (production - consumption) for all
+            pending buildings once they become active.
+        """
+        pending_workers: Dict[int, int] = {}
+        pending_production: Dict[int, float] = {}
+        pending_consumption: Dict[int, float] = {}
+
+        for b in self._buildings:
+            if b.state == BuildingState.CONSTRUCTING:
+                s = b.stats
+                for wl, cnt in s.workforce.items():
+                    pending_workers[wl] = pending_workers.get(wl, 0) + cnt
+                for res, rate in s.production_rate.items():
+                    pending_production[res] = pending_production.get(res, 0) + rate
+                for res, cost in s.production_cost.items():
+                    pending_consumption[res] = pending_consumption.get(res, 0) + cost
+
+        all_keys = set(pending_production) | set(pending_consumption)
+        rate_impact = {
+            k: pending_production.get(k, 0) - pending_consumption.get(k, 0)
+            for k in all_keys
+        }
+        return pending_workers, rate_impact
+
+    def _validate_build(self, building_type: BuildingType) -> Tuple[bool, List[str]]:
+        """
+        Validate whether building a new L1 building is safe.
+
+        Runs all 4 checks: resource, workforce, rates, interference.
+        Returns (is_valid, list_of_reasons_if_invalid).
+        """
+        stats = BUILDING_STATS[building_type][1]
+        reasons = []
+        pending_workers, pending_rate_impact = self._construction_pipeline()
+
+        # 1. Resource check
+        if not self._can_afford(stats.build_cost, BUILD_STOCKPILE_MIN):
+            reasons.append(f"Cannot afford {building_type.name} L1")
+
+        # 2. Workforce check (with interference)
+        total_needed: Dict[int, int] = {}
+        for wl, cnt in stats.workforce.items():
+            total_needed[wl] = cnt + pending_workers.get(wl, 0)
+
+        unassigned = self.unassigned_workers_by_level()
+        free_pop = self.free_population
+        for wl, needed in total_needed.items():
+            avail = unassigned.get(wl, 0)
+            if avail >= needed:
+                continue
+            if wl == 1:
+                deficit = needed - avail
+                if free_pop >= deficit * POP_PER_WORKER:
+                    self.last_events.append(
+                        f"Will need to recruit {deficit} L1 worker(s) "
+                        f"({deficit * POP_PER_WORKER} pop) for {building_type.name}"
+                    )
+                    continue
+            reasons.append(
+                f"Not enough available L{wl} workers "
+                f"({avail} avail, {needed} needed)"
+            )
+
+        # 3. Rates check (with interference)
+        current_rates = self._net_rates()
+        projected = dict(current_rates)
+        for res, rate in pending_rate_impact.items():
+            projected[res] = projected.get(res, 0) + rate
+        for res, rate in stats.production_rate.items():
+            projected[res] = projected.get(res, 0) + rate
+        for res, cost in stats.production_cost.items():
+            projected[res] = projected.get(res, 0) - cost
+
+        target_resources = set(stats.production_rate.keys())
+        for res, rate in projected.items():
+            if rate < 0 and res not in target_resources:
+                reasons.append(
+                    f"{ResourceType(res).name} rate would be negative "
+                    f"({rate:.1f}/tick)"
+                )
+
+        return len(reasons) == 0, reasons
+
+    def _validate_upgrade(self, building: Building) -> Tuple[bool, List[str]]:
+        """
+        Validate whether upgrading an existing building is safe.
+
+        Runs all 4 checks accounting for the current building's removal
+        and the new level's addition.
+        Returns (is_valid, list_of_reasons_if_invalid).
+        """
+        if building.level >= MAX_BUILDING_LEVEL:
+            return False, ["Already at max level"]
+
+        next_level = building.level + 1
+        next_stats = BUILDING_STATS[building.building_type][next_level]
+        current_stats = building.stats
+        reasons = []
+        pending_workers, pending_rate_impact = self._construction_pipeline()
+
+        # 1. Resource check
+        if not self._can_afford(next_stats.build_cost, BUILD_STOCKPILE_MIN):
+            reasons.append(
+                f"Cannot afford {building.building_type.name} "
+                f"lv{building.level} \u2192 lv{next_level}"
+            )
+
+        # 2. Workforce check (with interference)
+        total_needed: Dict[int, int] = {}
+        for wl, cnt in next_stats.workforce.items():
+            total_needed[wl] = cnt + pending_workers.get(wl, 0)
+
+        unassigned = self.unassigned_workers_by_level()
+        free_pop = self.free_population
+        for wl, needed in total_needed.items():
+            avail = unassigned.get(wl, 0)
+            if avail >= needed:
+                continue
+            if wl == 1:
+                deficit = needed - avail
+                if free_pop >= deficit * POP_PER_WORKER:
+                    self.last_events.append(
+                        f"Will need to recruit {deficit} L1 worker(s) "
+                        f"({deficit * POP_PER_WORKER} pop) for "
+                        f"{building.building_type.name} upgrade"
+                    )
+                    continue
+            reasons.append(
+                f"Not enough available L{wl} workers "
+                f"({avail} avail, {needed} needed)"
+            )
+
+        # 3. Rates check (with interference)
+        current_rates = self._net_rates()
+        projected = dict(current_rates)
+        # Remove current building's impact (it stops producing during construction)
+        for res, rate in current_stats.production_rate.items():
+            projected[res] = projected.get(res, 0) - rate
+        for res, cost in current_stats.production_cost.items():
+            projected[res] = projected.get(res, 0) + cost
+        # Add pending construction impacts
+        for res, rate in pending_rate_impact.items():
+            projected[res] = projected.get(res, 0) + rate
+        # Add new level's impacts
+        for res, rate in next_stats.production_rate.items():
+            projected[res] = projected.get(res, 0) + rate
+        for res, cost in next_stats.production_cost.items():
+            projected[res] = projected.get(res, 0) - cost
+
+        target_resources = set(next_stats.production_rate.keys())
+        for res, rate in projected.items():
+            if rate < 0 and res not in target_resources:
+                reasons.append(
+                    f"{ResourceType(res).name} rate would be negative "
+                    f"({rate:.1f}/tick)"
+                )
+
+        return len(reasons) == 0, reasons
 
     # ------------------------------------------------------------------
     # RULE-BASED DECISION ENGINE
@@ -947,7 +1140,7 @@ class Colony:
 
         # ── 1. REPAIR DAMAGED BUILDINGS ────────────────────────────────────
         for b in self._buildings:
-            if b.state == BuildingState.DAMAGED and b.health < REPAIR_PRIORITY_FRAC:
+            if b.state == BuildingState.DAMAGED and b.health < REPAIR_THRESHOLD:
                 self.start_repair(b.id)
 
         # ── 2. DIRECTIVE EXECUTION ─────────────────────────────────────────
@@ -974,9 +1167,12 @@ class Colony:
         Returns True if survival is secured, False otherwise (skip directives).
         """
         # ── FOOD SHORTAGE ────────────────────────────────────────────────
-        if CriticalFlag.FOOD_SHORTAGE in self.critical_flags:
+        if CriticalFlag.FOOD_SHORTAGE in self.critical_flags or net.get(R.ORGANICS, 0.0) < FOOD_DEFICIT_THRESHOLD:
             farm_type = BuildingType.FARM
-            if self._can_afford(BUILDING_STATS[farm_type][1].build_cost, BUILD_STOCKPILE_MIN):
+            # Check if a farm is already in the pipeline
+            if any(b.building_type == farm_type and b.state == BuildingState.CONSTRUCTING for b in self._buildings):
+                self.last_events.append("🚨 Farm already under construction (FOOD_SHORTAGE).")
+            elif self._can_afford(BUILDING_STATS[farm_type][1].build_cost, BUILD_STOCKPILE_MIN):
                 if self.can_staff_L1_building(farm_type) or self.free_population >= BUILDING_STATS[farm_type][1].workforce.get(1, 0):
                     self.construct_building(farm_type)
                     self.last_events.append("🚨 Built Farm (FOOD_SHORTAGE).")
@@ -985,14 +1181,17 @@ class Colony:
                     if b.is_active and b.building_type not in (BuildingType.FARM, BuildingType.MINE):
                         prod_cost = BUILDING_STATS[b.building_type][b.level].production_cost
                         if int(R.ORGANICS) in prod_cost:
-                            self.set_active(b.id, False)
+                            self.unassign_workers_from_building(b)
                             self.last_events.append(f"🚨 Disabled {b.building_type.name} (FOOD_SHORTAGE).")
+
             return False
 
         # ── POWER DEFICIT ────────────────────────────────────────────────
         if CriticalFlag.POWER_DEFICIT in self.critical_flags:
             pp_type = BuildingType.POWER_PLANT
-            if self._can_afford(BUILDING_STATS[pp_type][1].build_cost, BUILD_STOCKPILE_MIN):
+            if any(b.building_type == pp_type and b.state == BuildingState.CONSTRUCTING for b in self._buildings):
+                self.last_events.append("🚨 Power Plant already under construction (POWER_DEFICIT).")
+            elif self._can_afford(BUILDING_STATS[pp_type][1].build_cost, BUILD_STOCKPILE_MIN):
                 if self.can_staff_L1_building(pp_type) or self.free_population >= BUILDING_STATS[pp_type][1].workforce.get(1, 0):
                     self.construct_building(pp_type)
                     self.last_events.append("🚨 Built Power Plant (POWER_DEFICIT).")
@@ -1001,7 +1200,7 @@ class Colony:
                     if b.is_active and b.building_type not in (BuildingType.POWER_PLANT, BuildingType.MINE):
                         prod_cost = BUILDING_STATS[b.building_type][b.level].production_cost
                         if 4 in prod_cost:  # POWER
-                            self.assign_workers_to_building(b.id, False)
+                            self.assign_workers_to_building(b)
                             self.last_events.append(f"🚨 Disabled {b.building_type.name} (POWER_DEFICIT).")
             return False
 
@@ -1016,17 +1215,18 @@ class Colony:
                 if b.state == BuildingState.INACTIVE and b.building_type == BuildingType.FORT:
                     prod_rate = BUILDING_STATS[b.building_type][b.level].production_rate[6]  # DEFENSE
                     if self.can_staff_building(b) or self.free_population >= BUILDING_STATS[b.building_type][b.level].workforce.get(1, 0):
-                        self.assign_workers_to_building(b.id, True)
+                        self.assign_workers_to_building(b)
                         self.last_events.append(f"🛡 Reactivated Fort (defense={current_defense + 1}/{defense_needed}).")
                         total_rate += prod_rate  # assume full production for immediate effect
-                        if total_rate > (defense_needed - current_defense) / 10:
-                            # enough buildings are staffed to supply defense in 10 ticks
+                        if total_rate > (defense_needed - current_defense) / BOLSTER_DEFENSE_TICKS:
+                            # enough buildings are staffed to supply defense in a given number of ticks
                             break
             fort_type = BuildingType.FORT
-            if self._can_afford(BUILDING_STATS[fort_type][1].build_cost, BUILD_STOCKPILE_MIN):
-                if self.free_population >= BUILDING_STATS[fort_type][1].workforce.get(1, 0):
-                    self.construct_building(fort_type)
-                    self.last_events.append(f"🛡 Built Fort (defense={current_defense + 1}/{defense_needed}).")
+            if not any(b.building_type == fort_type and b.state == BuildingState.CONSTRUCTING for b in self._buildings):
+                if self._can_afford(BUILDING_STATS[fort_type][1].build_cost, BUILD_STOCKPILE_MIN):
+                    if self.free_population >= BUILDING_STATS[fort_type][1].workforce.get(1, 0):
+                        self.construct_building(fort_type)
+                        self.last_events.append(f"🛡 Built Fort (defense={current_defense + 1}/{defense_needed}).")
         elif current_defense > defense_needed:
             # unstaff all buildings
             excess_forts = [
@@ -1034,7 +1234,7 @@ class Colony:
                 if b.building_type == BuildingType.FORT and b.is_active
             ]
             for b in excess_forts:
-                self.unassign_workers_from_building(b.id, False)
+                self.unassign_workers_from_building(b)
                 self.last_events.append(f"🛡 Disabled excess Fort (defense={current_defense - 1}/{defense_needed}).")
 
         # ── WORKER SHORTAGE ──────────────────────────────────────────────
@@ -1043,7 +1243,6 @@ class Colony:
             if not b.is_active and (b.building_type is not BuildingType.FORT):
                 if self.can_staff_building(b):
                     self.assign_workers_to_building(b)
-                    self.last_events.append(f"👷 Reactivated {b.building_type.name} (id={b.id}) with workers.")
                 else:
                     buildings_needing_workers.append(b.id)
 
@@ -1068,12 +1267,15 @@ class Colony:
         if labs:
             labs.sort(key=lambda b: b.level, reverse=True)
             top_lab = labs[0]
-            if top_lab.level < MAX_BUILDING_LEVEL and self.can_upgrade_building(top_lab.id):
-                next_stats = BUILDING_STATS[BuildingType.LAB][top_lab.level + 1]
-                if self._can_afford(next_stats.build_cost, BUILD_STOCKPILE_MIN * 2):
+            if top_lab.level < MAX_BUILDING_LEVEL:
+                valid, reasons = self._validate_upgrade(top_lab)
+                if valid:
                     self.upgrade_building(top_lab.id)
                     self.last_events.append(f"🔬 Upgraded LAB to lv{top_lab.level + 1}.")
                     return True
+                else:
+                    for r in reasons:
+                        self.last_events.append(f"⛔ LAB upgrade rejected: {r}")
 
         return True
 
@@ -1093,6 +1295,7 @@ class Colony:
         """
         Expand building count for target resource.
         Build new buildings to widen availability and maintain consistent flow.
+        Only builds if all 4 validation checks pass.
         """
         if d.target_resource is None:
             return
@@ -1101,20 +1304,20 @@ class Colony:
         if not target_type:
             return
 
-        stats = BUILDING_STATS[target_type]
-        cost = stats[1].build_cost
-        min_workers = min(stats[1].workforce.values())
+        valid, reasons = self._validate_build(target_type)
+        if not valid:
+            for r in reasons:
+                self.last_events.append(f"⛔ BUILD {target_type.name} rejected: {r}")
+            return
 
-        if self._can_afford(cost, BUILD_STOCKPILE_MIN):
-            if self.free_population >= min_workers:
-                b = self.construct_building(target_type)
-                if b:
-                    self.last_events.append(f"🏗 Queued {target_type.name} (BUILD).")
+        b = self.construct_building(target_type)
+        if b:
+            self.last_events.append(f"🏗 Queued {target_type.name} (BUILD).")
 
     def _rule_upgrade(self, d: Directive, net: Dict[int, float]) -> None:
         """
         Upgrade existing buildings for target resource.
-        Only upgrade if sufficient workers for the upgraded building.
+        Only upgrades if all 4 validation checks pass.
         """
         if d.target_resource is None:
             return
@@ -1134,14 +1337,20 @@ class Colony:
         target_buildings.sort(key=lambda b: b.level)
 
         for b in target_buildings:
-            if self.can_upgrade_building(b.id):
-                next_stats = BUILDING_STATS[target_type][b.level + 1]
-                needed_workers = min(next_stats.workforce.values())
-                if self.free_population >= needed_workers:
-                    if self._can_afford(next_stats.build_cost, BUILD_STOCKPILE_MIN):
-                        self.upgrade_building(b.id)
-                        self.last_events.append(f"⬆ Upgraded {target_type.name} to lv{b.level + 1} (UPGRADE).")
-                        return
+            valid, reasons = self._validate_upgrade(b)
+            if not valid:
+                for r in reasons:
+                    self.last_events.append(
+                        f"⛔ UPGRADE {target_type.name} lv{b.level}\u2192lv{b.level+1} "
+                        f"rejected: {r}"
+                    )
+                continue
+
+            self.upgrade_building(b.id)
+            self.last_events.append(
+                f"⬆ Upgraded {target_type.name} to lv{b.level + 1} (UPGRADE)."
+            )
+            return
 
     def _rule_expand(self, d: Directive, net: Dict[int, float]) -> None:
         """
@@ -1152,9 +1361,13 @@ class Colony:
         shipyard_count = sum(1 for b in self._buildings if b.building_type == shipyard_type and b.is_active)
 
         if shipyard_count == 0:
-            if self._can_afford(BUILDING_STATS[shipyard_type][1].build_cost, BUILD_STOCKPILE_MIN):
+            valid, reasons = self._validate_build(shipyard_type)
+            if valid:
                 self.construct_building(shipyard_type)
                 self.last_events.append("🏗 Queued Shipyard (EXPAND).")
+            else:
+                for r in reasons:
+                    self.last_events.append(f"⛔ EXPAND Shipyard rejected: {r}")
             return
 
         ship_cost = BUILDING_STATS[shipyard_type][1].production_cost
@@ -1185,92 +1398,45 @@ class Colony:
     # TICK
     # ------------------------------------------------------------------
 
-    def tick(self) -> None:
+    def tick(self, verbose=True, enable_decision=True) -> None:
         """
         Advance the colony by one tick.
 
         Order of operations
         -------------------
         1. Reset per-tick ledgers
-        2. Advance constructions
-        3. Collect resources + pay building upkeep (tax applied here)
-        4. Pay repair upkeep + advance repairs
-        5. Apply wear-and-tear damage
-        6. Feed population
-        7. Evaluate flags
-        8. Execute directive (rule-based agent)
+        2. Auto-recruit workers to meet building demand
+        3. Advance constructions
+        4. Collect resources + pay building upkeep (tax applied here)
+        5. Pay repair upkeep + advance repairs
+        6. Apply wear-and-tear damage
+        7. Feed population
+        8. Evaluate flags
+        9. Execute directive (includes survival loop → then directive rule)
         """
         self._tick += 1
         self.last_produced = {}
         self.last_consumed = {}
         self.last_events   = []
 
-        # Auto-recruit / promote workers to meet per-level demand
+        # Auto-recruit workers to meet building demand
         shortage = self.required_workers_by_level()
         if shortage:
-            self.last_events.append(
-                f"Current worker shortage by level: " + ", ".join(f"L{lvl}: {gap}" for lvl, gap in shortage.items() if gap > 0)
-            )
             for lvl in sorted(shortage):   # fill lowest levels first
                 gap = shortage[lvl]
                 if gap <= 0:
                     continue
                 if lvl == 1:
                     recruited = self.recruit_workers(gap)
-                    if recruited:
-                        self.last_events.append(
-                            f"Auto-recruited {recruited} L1 worker(s) to meet demand."
-                        )
                 else:
-                    # Only promote/recruit for higher levels if a lab supports it
                     if self._lab_can_train(lvl):
-                        promoted = self.recruit_workers_of_level(lvl, gap)
-                        if promoted:
-                            self.last_events.append(
-                                f"Auto-recruited/promoted {promoted} L{lvl} worker(s) to meet demand."
-                            )
+                        recruited = self.recruit_workers_of_level(lvl, gap)
                     else:
-                        # No lab capable — recruit L1s as a best-effort fallback
                         recruited = self.recruit_workers(gap)
                         if recruited:
-                            self.last_events.append(
-                                f"Auto-recruited {recruited} L1 worker(s) (no Lab for L{lvl} training)."
-                            )
-                            # try to build of upgrade lab to meet demand in future ticks
                             lab_cost = BUILDING_STATS[BuildingType.LAB][lvl].build_cost
-                            currently_building = False
-                            for b in self._buildings:
-                                type_check = b.building_type == BuildingType.LAB
-                                lvl_check = b.level >= lvl-1
-                                construction_check = b.state == BuildingState.CONSTRUCTING
-                                if type_check and lvl_check and construction_check:
-                                    # dont do anything, just wait for lab to be complete
-                                    currently_building = True
-                                    break
-                            
-                            if self._can_afford(lab_cost, BUILD_STOCKPILE_MIN) and not currently_building:
-                                b = self.construct_building(BuildingType.LAB, level=lvl)
-                                if b:
-                                    self.last_events.append(
-                                        f"Queued Lab lv{lvl} to enable L{lvl} worker training."
-                                    )
-                            elif currently_building:
-                                self.last_events.append(
-                                    f"Lab lv{lvl-1} already under construction to meet L{lvl} worker demand."
-                                )
-                            else:
-                                self.last_events.append(
-                                    f"Cannot afford Lab lv{lvl-1} to enable L{lvl} worker training."
-                                )
-
-        # Try to reactivate INACTIVE buildings now that workers may have been recruited
-        for b in self._buildings:
-            if b.state == BuildingState.INACTIVE:
-                if self.assign_workers_to_building(b):
-                    b.state = BuildingState.ACTIVE
-                    self.last_events.append(
-                        f"Building {b.id} ({b.building_type.name} lv{b.level}) reactivated - workers now available."
-                    )
+                            if self._can_afford(lab_cost, BUILD_STOCKPILE_MIN):
+                                self.construct_building(BuildingType.LAB, level=lvl)
 
         # update construction progress and log completions
         for b in self._buildings:
@@ -1283,11 +1449,6 @@ class Colony:
 
         # pull resources from producing buildings, applying tax and upkeep
         self.collect_resources()
-
-        # pay for building upkeep and apply repairs
-        self.pay_repair_upkeep()
-        for b in self._buildings:
-            b.apply_repair()
 
         # increase population
         if self._rng is None:
@@ -1310,21 +1471,38 @@ class Colony:
 
         # damage active buildings
         for b in self._buildings:
-            if b.is_producing:
+            if b.is_active:
                 b.apply_damage()
                 if b.state == BuildingState.DESTROYED:
                     self.last_events.append(
                         f"{b.building_type.name} lv{b.level} (id={b.id}) DESTROYED."
                     )
 
+        # pay for building upkeep and apply repairs
+        self.pay_repair_upkeep()
+        for b in self._buildings:
+            if b.state == BuildingState.ACTIVE and b.health < REPAIR_THRESHOLD*b.max_health:
+                b.state = BuildingState.REPAIRING
+                b.apply_repair()
+            elif b.state == BuildingState.REPAIRING:
+                b.apply_repair()
+            elif b.state == BuildingState.DAMAGED:
+                b.state = BuildingState.REPAIRING
+                b.apply_repair()
+
+        # colony action section
         self.feed_population()
         self.evaluate_flags()
-        self.execute_directive()
+        if enable_decision:
+            self.execute_directive()
+
 
         # print the last events
-        print(f"======   Tick {self._tick}   ======")
-        for ev in self.last_events:
-            print(f"Colony {self.name} (id={self.colony_id}):  {ev}")
+        
+        if verbose:
+            print(f"======   Tick {self._tick}   ======")
+            for ev in self.last_events:
+                print(f"Colony {self.name} (id={self.colony_id}):  {ev}")
 
     # ------------------------------------------------------------------
     # REPORTING
@@ -1517,7 +1695,7 @@ class Faction:
     # TICK
     # ------------------------------------------------------------------
 
-    def tick(self) -> None:
+    def tick(self, verbose=True, enable_decision=True) -> None:
         """
         Advance the faction by one tick.
 
@@ -1529,9 +1707,11 @@ class Faction:
         """
         self._tick += 1
         for colony in self._colonies:
-            colony.tick()
+            colony.tick(verbose=verbose, enable_decision=enable_decision)
         self.collect_taxes()
         self._faction_strategy()
+        if not enable_decision:
+            self.last_events.append("Directive execution skipped (enable_decision=False).")
 
     def _faction_strategy(self) -> None:
         """

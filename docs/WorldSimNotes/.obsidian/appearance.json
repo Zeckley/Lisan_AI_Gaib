@@ -1,0 +1,8 @@
+{
+  "theme": "obsidian",
+  "enabledCssSnippets": [
+    "heading-colors"
+  ],
+  "baseFontSize": 16,
+  "nativeMenus": false
+}

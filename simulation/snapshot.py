@@ -170,7 +170,7 @@ def _colony_snapshot(colony) -> Dict[str, Any]:
         by_level = by_type.setdefault(b.level, {"producing": 0, "constructing": 0, "idle": 0})
         if b.state == BuildingState.CONSTRUCTING:
             by_level["constructing"] += 1
-        elif b.is_producing:
+        elif b.is_active:
             by_level["producing"]    += 1
         else:
             by_level["idle"]         += 1

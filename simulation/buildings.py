@@ -176,7 +176,7 @@ MINE_STATS: Dict[int, BuildingLevelStats] = {
         damage_rate     = 0.5,
         repair_cost     = {R.MINERALS: 5},
         repair_rate     = 2.0,
-        build_ticks     = 10,
+        build_ticks     = 5,
         workforce       = {1: 4},
         notes           = "Basic mineral extraction.",
     ),
@@ -249,7 +249,7 @@ POWER_PLANT_STATS: Dict[int, BuildingLevelStats] = {
         damage_rate     = 0.3,
         repair_cost     = {R.MINERALS: 6},
         repair_rate     = 2.5,
-        build_ticks     = 12,
+        build_ticks     = 3,
         workforce       = {1: 2},
         notes           = "Basic wood burning furnace; consumes ORGANICS.",
     ),
@@ -261,9 +261,9 @@ POWER_PLANT_STATS: Dict[int, BuildingLevelStats] = {
         damage_rate     = 0.4,
         repair_cost     = {R.MINERALS: 12},
         repair_rate     = 2.0,
-        build_ticks     = 22,
+        build_ticks     = 18,
         workforce       = {1: 2, 2: 2},
-        notes           = "Expanded geothermal; Converts to ORGANICS.",
+        notes           = "Expanded geothermal; consumes ORGANICS.",
     ),
     3: _stats(
         level=3,
@@ -275,7 +275,7 @@ POWER_PLANT_STATS: Dict[int, BuildingLevelStats] = {
         repair_rate     = 2.0,
         build_ticks     = 40,
         workforce       = {2: 3, 3: 1},
-        notes           = "Biofuel reactor; switches fuel source to ORGANICS.",
+        notes           = "Biofuel reactor; consumes ORGANICS.",
     ),
     4: _stats(
         level=4,
@@ -321,7 +321,7 @@ FARM_STATS: Dict[int, BuildingLevelStats] = {
         damage_rate     = 0.2,
         repair_cost     = {R.MINERALS: 4},
         repair_rate     = 3.0,
-        build_ticks     = 8,
+        build_ticks     = 2,
         workforce       = {1: 5},
         notes           = "Open-field farming.",
     ),
@@ -333,7 +333,7 @@ FARM_STATS: Dict[int, BuildingLevelStats] = {
         damage_rate     = 0.2,
         repair_cost     = {R.MINERALS: 8},
         repair_rate     = 3.0,
-        build_ticks     = 16,
+        build_ticks     = 12,
         workforce       = {1: 4, 2: 1},
         notes           = "Irrigation systems; improved yield.",
     ),
@@ -404,7 +404,7 @@ FACTORY_STATS: Dict[int, BuildingLevelStats] = {
         damage_rate     = 0.4,
         repair_cost     = {R.MINERALS: 8},
         repair_rate     = 2.0,
-        build_ticks     = 15,
+        build_ticks     = 10,
         workforce       = {1: 3, 2: 1},
         notes           = "Basic smelter; net +5 minerals/tick after feedstock.",
     ),
@@ -416,7 +416,7 @@ FACTORY_STATS: Dict[int, BuildingLevelStats] = {
         damage_rate     = 0.5,
         repair_cost     = {R.MINERALS: 15},
         repair_rate     = 2.0,
-        build_ticks     = 28,
+        build_ticks     = 25,
         workforce       = {1: 2, 2: 3},
         notes           = "Automated assembly line; net +15/tick.",
     ),
@@ -477,7 +477,7 @@ FORT_STATS: Dict[int, BuildingLevelStats] = {
         damage_rate     = 0.3,
         repair_cost     = {R.MINERALS: 10},
         repair_rate     = 2.0,
-        build_ticks     = 18,
+        build_ticks     = 8,
         workforce       = {1: 4},
         notes           = "Perimeter wall; basic garrison.",
     ),
@@ -489,7 +489,7 @@ FORT_STATS: Dict[int, BuildingLevelStats] = {
         damage_rate     = 0.3,
         repair_cost     = {R.MINERALS: 18},
         repair_rate     = 2.0,
-        build_ticks     = 30,
+        build_ticks     = 25,
         workforce       = {1: 3, 2: 2},
         notes           = "Reinforced bunkers; improved garrison.",
     ),
@@ -801,6 +801,154 @@ BUILDING_STATS: Dict[BuildingType, Dict[int, BuildingLevelStats]] = {
 }
 
 MAX_BUILDING_LEVEL = 5
+
+
+# ---------------------------------------------------------------------------
+# Building-level constants
+# ---------------------------------------------------------------------------
+
+INITIAL_HEALTH:    float = 1.0    # health on construction complete
+REPAIR_THRESHOLD:  float = 0.70   # health fraction below which → REPAIRING
+DAMAGED_THRESHOLD: float = 0.50   # health fraction below which → DAMAGED
+
+
+# ---------------------------------------------------------------------------
+# WORKER
+# ---------------------------------------------------------------------------
+
+class WorkerLevel(IntEnum):
+    L1 = 1
+    L2 = 2
+    L3 = 3
+    L4 = 4
+    L5 = 5
+
+
+@dataclass
+class Worker:
+    """A single worker unit with a skill level."""
+    level:                WorkerLevel
+    assigned_building_id: Optional[int] = None   # None = unassigned pool
+
+    @property
+    def is_assigned(self) -> bool:
+        return self.assigned_building_id is not None
+
+
+# ---------------------------------------------------------------------------
+# BUILDING  (runtime instance)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Building:
+    """
+    Runtime instance of a building owned by a Colony.
+
+    Static stats are always fetched live from BUILDING_STATS[type][level]
+    and never duplicated here.
+
+    Fields
+    ------
+    id              : unique int within the colony
+    building_type   : BuildingType enum
+    level           : current level (1-5)
+    state           : BuildingState enum
+    health          : float in [0.0, 1.0]
+    ticks_remaining : countdown for CONSTRUCTING state
+    planet_index    : which planet in the solar system this sits on
+    _workers        : workers currently assigned to this building
+    """
+    id:              int
+    building_type:   BuildingType
+    level:           int           = 1
+    state:           BuildingState = BuildingState.CONSTRUCTING
+    health:          float         = INITIAL_HEALTH
+    max_health:      float         = INITIAL_HEALTH
+    ticks_remaining: int           = 0
+    planet_index:    Optional[int] = None
+    _workers:        List[Worker]  = field(default_factory=list, repr=False)
+
+    @property
+    def stats(self) -> BuildingLevelStats:
+        return BUILDING_STATS[self.building_type][self.level]
+
+    @property
+    def is_active(self) -> bool:
+        return self.state in (BuildingState.ACTIVE, BuildingState.SURGING)
+
+    @property
+    def surge_multiplier(self) -> float:
+        return 1.5 if self.state == BuildingState.SURGING else 1.0
+
+    @property
+    def properly_staffed(self) -> bool:
+        """True if all required workers are assigned to this building."""
+        return all(
+            sum(int(w.level) == lvl for w in self._workers) >= count
+            for lvl, count in self.stats.workforce.items()
+        )
+
+    # ------------------------------------------------------------------
+    # Per-tick methods
+    # ------------------------------------------------------------------
+
+    def apply_damage(self) -> None:
+        """Reduce health by this tick's damage rate (doubled while SURGING)."""
+        if self.state not in (BuildingState.ACTIVE, BuildingState.SURGING):
+            return
+        rate = self.stats.damage_rate * (2.0 if self.state == BuildingState.SURGING else 1.0)
+        self.health = max(0.0, self.health - rate / 100.0)
+        if self.health <= 0.0:
+            self.state = BuildingState.DESTROYED
+        elif self.health < REPAIR_THRESHOLD:
+            self.state = BuildingState.REPAIRING
+        elif self.health < DAMAGED_THRESHOLD:
+            self.state = BuildingState.DAMAGED
+
+    def apply_repair(self) -> None:
+        """Advance repair health; transition to ACTIVE when full."""
+        if self.state not in [BuildingState.ACTIVE, BuildingState.REPAIRING, BuildingState.DAMAGED]:
+            return
+        self.health = min(1.0, self.health + self.stats.repair_rate / 100.0)
+        if self.health >= 1.0:
+            self.state = BuildingState.ACTIVE
+        print(f"Repairing building {self.id} ({self.building_type.name} lv{self.level}): "
+              f"health {self.health:.2f} (rate {self.stats.repair_rate:.2f}/tick)")
+
+    def advance_construction(self) -> bool:
+        """Count down construction. Returns True when ACTIVE."""
+        if self.state != BuildingState.CONSTRUCTING:
+            return False
+        self.ticks_remaining = max(0, self.ticks_remaining - 1)
+        if self.ticks_remaining == 0:
+            self.state  = BuildingState.ACTIVE
+            self.health = INITIAL_HEALTH
+            return True
+        return False
+
+    def production_this_tick(self) -> Dict[int, float]:
+        if not self.is_active:
+            return {}
+        return {r: amt * self.surge_multiplier for r, amt in self.stats.production_rate.items()}
+
+    def upkeep_this_tick(self) -> Dict[int, float]:
+        if not self.is_active:
+            return {}
+        return dict(self.stats.production_cost)
+
+    def repair_upkeep_this_tick(self) -> Dict[int, float]:
+        if self.state != BuildingState.REPAIRING:
+            return {}
+        return dict(self.stats.repair_cost)
+
+    def summary(self) -> str:
+        bar_filled = int(self.health * 20)
+        bar   = "█" * bar_filled + "░" * (20 - bar_filled)
+        extra = f"  ⏳ {self.ticks_remaining}t left" if self.state == BuildingState.CONSTRUCTING else ""
+        return (
+            f"  [{self.id:>3}] {self.building_type.name:<12} lv{self.level}"
+            f"  {self.state.name:<12} [{bar}] {self.health*100:>5.1f}%{extra}"
+        )
 
 
 # ---------------------------------------------------------------------------

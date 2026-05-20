@@ -1,0 +1,355 @@
+{
+  "main": {
+    "id": "27cc7bf67b0ce53c",
+    "type": "split",
+    "children": [
+      {
+        "id": "478f61bbd76dbf79",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "4db3f6a7e48f8e3a",
+            "type": "leaf",
+            "state": {
+              "type": "canvas",
+              "state": {
+                "file": "Codebase Graph.canvas",
+                "viewState": {
+                  "x": 684.709059624528,
+                  "y": 614.7424649254683,
+                  "zoom": -1.6666666666666663
+                }
+              },
+              "icon": "lucide-layout-dashboard",
+              "title": "Codebase Graph"
+            }
+          },
+          {
+            "id": "77b30c7d18504abb",
+            "type": "leaf",
+            "state": {
+              "type": "graph",
+              "state": {},
+              "icon": "lucide-git-fork",
+              "title": "Graph view"
+            }
+          },
+          {
+            "id": "6f9fb954efe8ee00",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "TaskList.md",
+                "mode": "source",
+                "source": false,
+                "backlinks": true,
+                "backlinkOpts": {
+                  "collapseAll": false,
+                  "extraContext": false,
+                  "sortOrder": "alphabetical",
+                  "showSearch": false,
+                  "searchQuery": "",
+                  "backlinkCollapsed": false,
+                  "unlinkedCollapsed": true
+                }
+              },
+              "icon": "lucide-file",
+              "title": "TaskList"
+            }
+          },
+          {
+            "id": "de31243c87c36359",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Directive Overhaul.md",
+                "mode": "source",
+                "source": false,
+                "backlinks": true,
+                "backlinkOpts": {
+                  "collapseAll": false,
+                  "extraContext": false,
+                  "sortOrder": "alphabetical",
+                  "showSearch": false,
+                  "searchQuery": "",
+                  "backlinkCollapsed": false,
+                  "unlinkedCollapsed": true
+                }
+              },
+              "icon": "lucide-file",
+              "title": "Directive Overhaul"
+            }
+          },
+          {
+            "id": "1eff5a0915159934",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Scratch Paper.md",
+                "mode": "source",
+                "source": false,
+                "backlinks": true,
+                "backlinkOpts": {
+                  "collapseAll": false,
+                  "extraContext": false,
+                  "sortOrder": "alphabetical",
+                  "showSearch": false,
+                  "searchQuery": "",
+                  "backlinkCollapsed": false,
+                  "unlinkedCollapsed": true
+                }
+              },
+              "icon": "lucide-file",
+              "title": "Scratch Paper"
+            }
+          }
+        ],
+        "currentTab": 1
+      },
+      {
+        "id": "e23eb8b7a0406680",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "24e01eb97fa7815c",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "CodeBase/Modules/Colony Module.md",
+                "mode": "source",
+                "source": false,
+                "backlinks": true,
+                "backlinkOpts": {
+                  "collapseAll": false,
+                  "extraContext": false,
+                  "sortOrder": "alphabetical",
+                  "showSearch": false,
+                  "searchQuery": "",
+                  "backlinkCollapsed": false,
+                  "unlinkedCollapsed": true
+                }
+              },
+              "icon": "lucide-file",
+              "title": "Colony Module"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "95bb6a32d36bb469",
+    "type": "split",
+    "children": [
+      {
+        "id": "ba296ebf46d49f03",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "a87c23ff49e8296d",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "64bab7b3a14b8748",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "4752f2beacf4ed4d",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 200
+  },
+  "right": {
+    "id": "94b5d6bb35406e58",
+    "type": "split",
+    "children": [
+      {
+        "id": "0f601b6cf063dfa8",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "72971d90db3abfe2",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "World Map.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for World Map"
+            }
+          },
+          {
+            "id": "9a4d9ef1fcbe4963",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "World Map.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from World Map"
+            }
+          },
+          {
+            "id": "b015b00733c05fbf",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "d13ab37a52d3f25b",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "8fa238addb11ee22",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "World Map.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of World Map"
+            }
+          },
+          {
+            "id": "ef3f843b016e26e9",
+            "type": "leaf",
+            "state": {
+              "type": "calendar",
+              "state": {},
+              "icon": "lucide-ghost",
+              "title": "calendar"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "random-note:Open random note": false,
+      "bases:Create new base": false,
+      "keep-the-rhythm:Word Count Stats": false
+    }
+  },
+  "active": "77b30c7d18504abb",
+  "lastOpenFiles": [
+    "CodeBase/Modules/Colony Module.md",
+    "Codebase Graph.canvas",
+    "Colony.md",
+    "TaskList.md",
+    "Scratch Paper.md",
+    "CodeBase/Enums/Building Stats/Power_Plant_Stats.md",
+    "CodeBase/Enums/Building Stats/Lab_Level_Stats.md",
+    "CodeBase/Enums/Building Stats/Factory_Stats.md",
+    "Daily Template.md",
+    "Images/addressme.webp",
+    "Images/addressme.webp.opdownload",
+    "Images",
+    "CriticalFlag.md",
+    "Directive Overhaul.md",
+    "CodeBase/Enums/BuildingType.md",
+    "CodeBase/Codebase Home.md",
+    "Daily Notes/PROJECT_CONTEXT_v0.0.4.md",
+    "Critical Flags.md",
+    "CodeBase/Modules/Resources.md",
+    "CodeBase/Patterns/Import Order.md",
+    "CodeBase/Enums/TerrainType.md",
+    "CodeBase/Modules/Terrain.md",
+    "CodeBase/Modules/World Map.md",
+    "Daily Notes/Context Evolution.md",
+    "Daily Notes/PROJECT_CONTEXT_v0.0.2.md",
+    "CodeBase/Patterns/Python Patterns.md",
+    "Future Modules.md",
+    "CodeBase/Modules/Decision Module/Directive.md",
+    "CodeBase/Modules/Decision Module/DirectiveType.md",
+    "CodeBase/Enums/Building Stats",
+    "CodeBase/Modules/Decision Module",
+    "CodeBase/Modules/Future Stuff",
+    "CodeBase/Modules/FactionMethods",
+    "CodeBase/Patterns",
+    "CodeBase/Modules",
+    "CodeBase/Enums",
+    "CodeBase/{Modules,Enums,Patterns}",
+    "WorldSim/WorldSimArchitecture.canvas"
+  ]
+}
