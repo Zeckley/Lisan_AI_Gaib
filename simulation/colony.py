@@ -535,6 +535,10 @@ class Colony:
         building._workers.clear()
 
         required = building.stats.workforce
+        if not required:
+            building.state = BuildingState.ACTIVE
+            return True
+
         assigned = []
         success = True
 
@@ -547,11 +551,10 @@ class Colony:
             if assign_count < count:
                 for w in assigned:
                     w.assigned_building_id = None
-                building._workers.clear()
                 success = False
 
         if assigned and success:
-            building._workers = assigned
+            building._workers.extend(assigned)
             building.state = BuildingState.ACTIVE
             self.last_events.append(
                 f"Assigned {len(assigned)} worker(s) to {building.building_type.name} "
