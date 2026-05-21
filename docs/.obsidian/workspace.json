@@ -167,6 +167,7 @@
             "state": {
               "type": "backlink",
               "state": {
+                "file": "Colony - Flag System.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -176,7 +177,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "Backlinks"
+              "title": "Backlinks for Colony - Flag System"
             }
           },
           {
@@ -185,11 +186,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
+                "file": "Colony - Flag System.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "Outgoing links"
+              "title": "Outgoing links from Colony - Flag System"
             }
           },
           {
@@ -227,12 +229,13 @@
             "state": {
               "type": "outline",
               "state": {
+                "file": "Colony - Flag System.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "Outline"
+              "title": "Outline of Colony - Flag System"
             }
           }
         ]
@@ -253,8 +256,9 @@
       "bases:Create new base": false
     }
   },
-  "active": "1ff2f186edfaef9d",
+  "active": "c4a9cdbce4ec3206",
   "lastOpenFiles": [
+    "PROJECT_STATE_v0.0.5.md",
     "WorldSimNotes/Building.md",
     "WorldSimNotes/CodeBase/Modules/Buildings Module.md",
     "Colony - Flag System.md",
